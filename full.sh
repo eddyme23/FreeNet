@@ -32,11 +32,6 @@ read -p "Enter SlowDNS Nameserver (or press enter for default): " -e -i "ns-dl.g
 Serverkey='819d82813183e4be3ca1ad74387e47c0c993b81c601b2d1473a3f47731c404ae'
 Serverpub='7fbd1f8aa0abfe15a7903e837f78aba39cf61d36f183bd604daa2fe4ef3b7b59'
 
-
-# UDP Hysteria
-read -p "Enter Hysteria OBFS Key (or press enter for default): " -e -i "Guruzfreenet" Hysteria_OBFS
-read -p "Enter Hysteria Password (or press enter for default): " -e -i "123" Hysteria_Pass
-
 # WebServer Ports
 Nginx_Port='85' 
 
@@ -934,10 +929,10 @@ echo '{
   "up_mbps": 100,
   "down_mbps": 100,
   "disable_udp": false,
-  "obfs": "$Hysteria_OBFS",
+  "obfs": "Freenet",
   "auth": {
     "mode": "passwords",
-	"config": ["$Hysteria_OBFS:$Hysteria_Pass"]
+    "config": ["Freenet:123"]
   }
 }
 ' >> /etc/hysteria/config.json
