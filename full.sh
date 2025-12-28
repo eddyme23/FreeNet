@@ -19,8 +19,8 @@ Squid_Port2='8080'
 
 # Python Socks Proxy
 WsPorts=('80' '8080' '8880' '2086' '2082') # for port 8080 change cloudflare SSL/TLS to full
-WsPort='80'                      # single backend WS port used by the proxy (keeps other ports redirected to this)
-WsResponse='HTTP/1.1 101 Switching AustroPlus Protocols\r\n\r\n'
+WsPort='80' # single backend WS port used by the proxy (keeps other ports redirected to this)
+WsResponse='HTTP/1.1 101 Switching Protocols\r\n\r\n'
 
 # SSLH Port
 MainPort='666' # main port to tunnel default 443
@@ -33,8 +33,27 @@ Serverpub='7fbd1f8aa0abfe15a7903e837f78aba39cf61d36f183bd604daa2fe4ef3b7b59'
 
 # PROTOCOL | UDP PORT | OBFS | PASSWORDS
 UDP_PORT=":36712"
-OBFS="sa4uhy"
-PASSWORD="EzUdp90hy"
+
+# Prompt installer for Hysteria obfuscation (obfs) and password instead of hard-coded values.
+_default_obfs='sa4uhy'
+_default_password='EzUdp90hy'
+
+if [ -t 0 ]; then
+  # Prompt for obfs (user can press Enter to accept default)
+  read -e -p "Enter Hysteria obfuscation string (obfs) [${_default_obfs}]: " -i "${_default_obfs}" _input_obfs
+  OBFS="${_input_obfs:-${_default_obfs}}"
+
+  # Prompt for password silently (hidden input). If empty, use default.
+  read -s -p "Enter Hysteria password (press Enter to use default): " _input_pass
+  echo
+  PASSWORD="${_input_pass:-${_default_password}}"
+else
+  # Non-interactive: use any pre-set env values or defaults
+  OBFS="${OBFS:-${_default_obfs}}"
+  PASSWORD="${PASSWORD:-${_default_password}}"
+fi
+
+export OBFS PASSWORD
 
 # WebServer Ports
 Nginx_Port='85' 
@@ -924,7 +943,16 @@ systemctl status --no-pager server-sldns
 # UDP hysteria
 wget -N --no-check-certificate -q -O ~/install_server.sh https://raw.githubusercontent.com/RepositoriesDexter/Hysteria/main/install_server.sh; chmod +x ~/install_server.sh; ./install_server.sh --version v1.3.5
 rm -f /etc/hysteria/config.json
-echo '{
+
+# Ensure /etc/hysteria exists
+mkdir -p /etc/hysteria
+
+# Derive numeric port from UDP_PORT (accepts formats like ":36712" or "0.0.0.0:36712")
+HYST_PORT="${UDP_PORT##*:}"
+
+# Create the hysteria config with proper variable expansion
+cat > /etc/hysteria/config.json <<EOF
+{
   "log_level": "fatal",
   "listen": "$UDP_PORT",
   "cert": "/etc/hysteria/hysteria.crt",
@@ -934,11 +962,11 @@ echo '{
   "disable_udp": false,
   "obfs": "$OBFS",
   "auth": {
-	"mode": "passwords",
-	"config": ["$PASSWORD"]
+    "mode": "passwords",
+    "config": ["$PASSWORD"]
   }
 }
-' >> /etc/hysteria/config.json
+EOF
 
 # Creating Hysteria CERT
 cat << EOF > /etc/hysteria/hysteria.crt
@@ -1031,7 +1059,9 @@ chmod 755 /etc/hysteria/config.json
 chmod 755 /etc/hysteria/hysteria.crt
 chmod 755 /etc/hysteria/hysteria.key
 
-iptables -t nat -A PREROUTING -i $(ip -4 route ls|grep default|grep -Po '(?<=dev )(\S+)'|head -1) -p udp --dport 20000:50000 -j DNAT --to-destination :36712
+# Add iptables NAT rule - use detected interface and the derived hysteria port
+IFACE="$(ip -4 route ls|grep default|grep -Po '(?<=dev )(\S+)'|head -1)"
+iptables -t nat -A PREROUTING -i "$IFACE" -p udp --dport 20000:50000 -j DNAT --to-destination :$HYST_PORT
 systemctl enable hysteria-server.service
 systemctl restart hysteria-server.service
 systemctl status --no-pager hysteria-server.service
