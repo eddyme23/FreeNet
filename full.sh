@@ -20,6 +20,7 @@ Squid_Port2='8080'
 # Python Socks Proxy
 # WsPort='80'  # for port 8080 change cloudflare SSL/TLS to full
 WsPorts=('80' '8080' '8880' '2086' '2082' '25') # for port 8080 change cloudflare SSL/TLS to full
+WsPort='80'                      # single backend WS port used by the proxy (keeps other ports redirected to this)
 WsResponse='HTTP/1.1 101 Switching AustroPlus Protocols\r\n\r\n'
 
 # SSLH Port
@@ -620,6 +621,13 @@ systemctl enable socksproxy
 systemctl restart socksproxy
 systemctl status --no-pager socksproxy
 
+# Redirect additional non-TLS ports to the plain WS backend (immediate)
+iptables -t nat -A PREROUTING -p tcp --dport 8080 -j REDIRECT --to-port $WsPort
+iptables -t nat -A PREROUTING -p tcp --dport 8880 -j REDIRECT --to-port $WsPort
+iptables -t nat -A PREROUTING -p tcp --dport 2082 -j REDIRECT --to-port $WsPort
+iptables -t nat -A PREROUTING -p tcp --dport 2086 -j REDIRECT --to-port $WsPort
+iptables -t nat -A PREROUTING -p tcp --dport 25   -j REDIRECT --to-port $WsPort
+
 # Nginx configure
 rm /home/vps/public_html -rf
 rm /etc/nginx/sites-* -rf
@@ -1044,6 +1052,13 @@ export DEBIAN_FRONTEND=noninteractive
 iptables -I INPUT -p udp --dport 5300 -j ACCEPT
 iptables -t nat -I PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 5300
 
+# Redirect additional WS ports to MyWSPort
+iptables -t nat -A PREROUTING -p tcp --dport 8080 -j REDIRECT --to-port MyWSPort
+iptables -t nat -A PREROUTING -p tcp --dport 8880 -j REDIRECT --to-port MyWSPort
+iptables -t nat -A PREROUTING -p tcp --dport 2082 -j REDIRECT --to-port MyWSPort
+iptables -t nat -A PREROUTING -p tcp --dport 2086 -j REDIRECT --to-port MyWSPort
+iptables -t nat -A PREROUTING -p tcp --dport 25   -j REDIRECT --to-port MyWSPort
+
 # Disable IpV6
 echo 1 > /proc/sys/net/ipv6/conf/all/disable_ipv6
 
@@ -1064,6 +1079,7 @@ deekayz
 sed -i "s|MyTimeZone|$MyVPS_Time|g" /etc/deekaystartup
 sed -i "s|DNS1|$Dns_1|g" /etc/deekaystartup
 sed -i "s|DNS2|$Dns_2|g" /etc/deekaystartup
+sed -i "s|MyWSPort|$WsPort|g" /etc/deekaystartup
 rm -rf /etc/sysctl.d/99*
 
  # Setting our startup script to run every machine boots 
