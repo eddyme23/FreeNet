@@ -18,7 +18,6 @@ Squid_Port1='3128'
 Squid_Port2='8080'
 
 # Python Socks Proxy
-# WsPort='80'  # for port 8080 change cloudflare SSL/TLS to full
 WsPorts=('80' '8080' '8880' '2086' '2082' '25') # for port 8080 change cloudflare SSL/TLS to full
 WsPort='80'                      # single backend WS port used by the proxy (keeps other ports redirected to this)
 WsResponse='HTTP/1.1 101 Switching AustroPlus Protocols\r\n\r\n'
@@ -31,6 +30,12 @@ MainPort='666' # main port to tunnel default 443
 read -p "Enter SlowDNS Nameserver (or press enter for default): " -e -i "ns-dl.guruzgh.ovh" Nameserver
 Serverkey='819d82813183e4be3ca1ad74387e47c0c993b81c601b2d1473a3f47731c404ae'
 Serverpub='7fbd1f8aa0abfe15a7903e837f78aba39cf61d36f183bd604daa2fe4ef3b7b59'
+
+# PROTOCOL | UDP PORT | OBFS | PASSWORDS
+PROTOCOL="udp"
+UDP_PORT=":36712"
+OBFS="sa4uhy"
+PASSWORD="EzUdp90hy"
 
 # WebServer Ports
 Nginx_Port='85' 
@@ -923,16 +928,16 @@ wget -N --no-check-certificate -q -O ~/install_server.sh https://raw.githubuserc
 rm -f /etc/hysteria/config.json
 echo '{
   "log_level": "fatal",
-  "listen": ":5666",
+  "listen": "$UDP_PORT",
   "cert": "/etc/hysteria/hysteria.crt",
   "key": "/etc/hysteria/hysteria.key",
   "up_mbps": 100,
   "down_mbps": 100,
   "disable_udp": false,
-  "obfs": "Freenet",
+  "obfs": "$OBFS",
   "auth": {
-    "mode": "passwords",
-    "config": ["Freenet:123"]
+	"mode": "passwords",
+	"config": ["$PASSWORD"]
   }
 }
 ' >> /etc/hysteria/config.json
