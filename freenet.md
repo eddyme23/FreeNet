@@ -9,3 +9,7 @@ SlowDNS Nameserver => Make sure to link your nameserver on cloudflare and input 
 Hysteria default OBFS and Password
 OBFS = Guruzfreenet
 PASSWORD = 123
+
+WebAdmin User & Password
+Username: deekay
+Password: 20037
