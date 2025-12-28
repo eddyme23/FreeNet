@@ -1,1 +1,1 @@
-# FreeNett
+# FreeNet
