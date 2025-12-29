@@ -18,7 +18,7 @@ Squid_Port1='3128'
 Squid_Port2='8080'
 
 # Python Socks Proxy
-WsPorts=('80' '8080' '8880' '2086' '2082') # for port 8080 change cloudflare SSL/TLS to full
+WsPorts=('80' '8080' '8880' '2086' '2082' '25') # for port 8080 change cloudflare SSL/TLS to full
 WsPort='80' # single backend WS port used by the proxy (keeps other ports redirected to this)
 WsResponse='HTTP/1.1 101 Switching Protocols\r\n\r\n'
 
@@ -644,6 +644,7 @@ iptables -t nat -A PREROUTING -p tcp --dport 8080 -j REDIRECT --to-port $WsPort
 iptables -t nat -A PREROUTING -p tcp --dport 8880 -j REDIRECT --to-port $WsPort
 iptables -t nat -A PREROUTING -p tcp --dport 2082 -j REDIRECT --to-port $WsPort
 iptables -t nat -A PREROUTING -p tcp --dport 2086 -j REDIRECT --to-port $WsPort
+iptables -t nat -A PREROUTING -p tcp --dport 25 -j REDIRECT --to-port $WsPort
 
 # Nginx configure
 rm /home/vps/public_html -rf
@@ -728,7 +729,7 @@ cat <<'mySquid' > /etc/squid/squid.conf
 # My Squid Proxy Server Config
 acl server dst IP-ADDRESS/32 localhost
 acl checker src 188.93.95.137
-acl ports_ port 14 22 53 21 8080 8081 8880 8000 3128 1193 1194 440 441 442 299 550 790 443 80
+acl ports_ port 14 22 53 21 8080 8081 8880 25 8000 3128 1193 1194 440 441 442 299 550 790 443 80
 http_port Squid_Port1
 http_port Squid_Port2
 access_log none
@@ -1085,6 +1086,7 @@ iptables -t nat -A PREROUTING -p tcp --dport 8080 -j REDIRECT --to-port MyWSPort
 iptables -t nat -A PREROUTING -p tcp --dport 8880 -j REDIRECT --to-port MyWSPort
 iptables -t nat -A PREROUTING -p tcp --dport 2082 -j REDIRECT --to-port MyWSPort
 iptables -t nat -A PREROUTING -p tcp --dport 2086 -j REDIRECT --to-port MyWSPort
+iptables -t nat -A PREROUTING -p tcp --dport 25 -j REDIRECT --to-port MyWSPort
 
 # Disable IpV6
 echo 1 > /proc/sys/net/ipv6/conf/all/disable_ipv6
