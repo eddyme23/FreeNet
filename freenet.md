@@ -7,8 +7,8 @@ SlowDNS Public Key
 SlowDNS Nameserver => Make sure to link your nameserver on cloudflare and input in prompt
 
 Hysteria default OBFS and Password
-OBFS = Freenet
-PASSWORD = 123
+OBFS = sa4uhy
+PASSWORD = EzUdp90hy
 
 WebAdmin User & Password
 Username: deekay
