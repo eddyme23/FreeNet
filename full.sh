@@ -26,7 +26,7 @@ WsResponse='HTTP/1.1 101 Switching Protocols\r\n\r\n'
 MainPort='666' # main port to tunnel default 443
 
 # SSH SlowDNS
-# Nameserver='apvt-dns.tekidoervpn.site' # add NS server cloudflare
+# Nameserver='apvt-dns.guruzghvpn.site' # add NS server cloudflare
 read -p "Enter SlowDNS Nameserver (or press enter for default): " -e -i "ns-dl.guruzgh.ovh" Nameserver
 Serverkey='819d82813183e4be3ca1ad74387e47c0c993b81c601b2d1473a3f47731c404ae'
 Serverpub='7fbd1f8aa0abfe15a7903e837f78aba39cf61d36f183bd604daa2fe4ef3b7b59'
@@ -1226,7 +1226,7 @@ echo ""
 clear
 echo ""
 echo ""
-figlet Tekidoer Script -c | lolcat
+figlet GuruzGH Script -c | lolcat
 echo ""
 echo "       Installation Complete! System need to reboot to apply all changes! "
 history -c;
