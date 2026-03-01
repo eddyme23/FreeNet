@@ -958,8 +958,8 @@ cat > /etc/hysteria/config.json <<EOF
   "listen": "$UDP_PORT",
   "cert": "/etc/hysteria/hysteria.crt",
   "key": "/etc/hysteria/hysteria.key",
-  "up_mbps": 100,
-  "down_mbps": 100,
+  "up_mbps": 8,
+  "down_mbps": 15,
   "disable_udp": false,
   "obfs": "$OBFS",
   "auth": {
