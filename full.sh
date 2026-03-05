@@ -15,11 +15,10 @@ Stunnel_Port='443' # through SSLH
 
 # Squid Ports
 Squid_Port1='3128'
-Squid_Port2='8080'
-
+Squid_Port2='8000'  # changed from 8080 so WS can use 8080
 # Python Socks Proxy
-WsPorts=('80' '8080' '8880' '2086' '2082' '25') # for port 8080 change cloudflare SSL/TLS to full
-WsPort='80' # single backend WS port used by the proxy (keeps other ports redirected to this)
+WsPorts=('80' '8080' '8880' '2052' '2082' '2086' '2095')  # WS ports to listen on (no iptables redirect)
+WsPort='80'  # default WS port (instances override via -p)
 WsResponse='HTTP/1.1 101 Switching Protocols\r\n\r\n'
 
 # SSLH Port
@@ -613,10 +612,10 @@ if __name__ == '__main__':
     main()
 Socks
 
-# Creating a service
-cat << service > /etc/systemd/system/socksproxy.service
+# Creating a template service so we can run WS on multiple ports
+cat <<'service' > /etc/systemd/system/ws@.service
 [Unit]
-Description=Websocket Python
+Description=Websocket Python (port %i)
 Documentation=https://google.com
 After=network.target nss-lookup.target
 
@@ -627,24 +626,23 @@ CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 NoNewPrivileges=true
 Restart=on-failure
-ExecStart=/usr/bin/python -O /etc/socksproxy/proxy.py
+ExecStart=/usr/bin/python -O /etc/socksproxy/proxy.py -b 0.0.0.0 -p %i
 
 [Install]
 WantedBy=multi-user.target
 service
 
-# Start the service
+# Start WS instances for every port in WsPorts[]
 systemctl daemon-reload
-systemctl enable socksproxy
-systemctl restart socksproxy
-systemctl status --no-pager socksproxy
+for p in "${WsPorts[@]}"; do
+  systemctl enable "ws@${p}"
+  systemctl restart "ws@${p}"
+done
 
-# Redirect additional non-TLS ports to the plain WS backend (immediate)
-iptables -t nat -A PREROUTING -p tcp --dport 8080 -j REDIRECT --to-port $WsPort
-iptables -t nat -A PREROUTING -p tcp --dport 8880 -j REDIRECT --to-port $WsPort
-iptables -t nat -A PREROUTING -p tcp --dport 2082 -j REDIRECT --to-port $WsPort
-iptables -t nat -A PREROUTING -p tcp --dport 2086 -j REDIRECT --to-port $WsPort
-iptables -t nat -A PREROUTING -p tcp --dport 25 -j REDIRECT --to-port $WsPort
+# Show status for the primary WS ports
+systemctl status --no-pager ws@80 ws@8080 ws@8880 || true
+
+# NOTE: No iptables REDIRECT rules for WS ports. WS listens directly on each port in WsPorts[].
 
 # Nginx configure
 rm /home/vps/public_html -rf
@@ -790,7 +788,7 @@ declare -A service_ports=(
     ["dropbear"]="DROPBEARPORT1,DROPBEARPORT2"
     ["stunnel4"]="STUNNELPORT"
     ["sslh"]="SSLHPORT"
-    ["python"]="SOCKSPORT"
+    ["ws"]="WSPORTS"
     ["squid"]="SQUIDPORT1,SQUIDPORT2"
     ["nginx"]="NGINXPORT"
     ["sshd"]="SSHPORT1,SSHPORT2"
@@ -800,7 +798,7 @@ declare -A service_commands=(
     ["dropbear"]="sudo systemctl --force --force restart dropbear"
     ["stunnel4"]="sudo systemctl --force --force restart stunnel4"
     ["sslh"]="sudo systemctl --force --force restart sslh"
-    ["python"]="sudo systemctl --force --force restart socksproxy"
+    ["ws"]="sudo systemctl --force --force restart WS_UNITS"
     ["squid"]="sudo systemctl --force --force restart squid"
     ["nginx"]="sudo systemctl --force --force restart nginx"
     ["sshd"]="sudo systemctl --force --force restart ssh"
@@ -810,14 +808,27 @@ for service in "${!service_ports[@]}"; do
     ports="${service_ports[$service]}"
     all_ports_ok=true
 
-    for port in ${ports//,/ }; do
-        if ! netstat -ntlp | awk '{print $4}' | grep -q ":$port\$"; then
-            all_ports_ok=false
-            break
-        fi
-    done
+    # Special handling for WS (systemd template instances)
+    if [ "$service" = "ws" ]; then
+        for unit in WS_UNITS; do
+            if ! systemctl is-active --quiet "$unit"; then
+                all_ports_ok=false
+                break
+            fi
+        done
+        proc_ok=true
+    else
+        for port in ${ports//,/ }; do
+            if ! netstat -ntlp | awk '{print $4}' | grep -q ":$port$"; then
+                all_ports_ok=false
+                break
+            fi
+        done
+        proc_ok=false
+        pgrep "$service" >/dev/null 2>&1 && proc_ok=true
+    fi
 
-    if ! pgrep "$service" >/dev/null 2>&1 || [ "$all_ports_ok" = false ]; then
+    if [ "$proc_ok" = false ] || [ "$all_ports_ok" = false ]; then
         echo "$service is not functioning correctly (missing ports or process). Restarting..."
         eval "${service_commands[$service]}" >/dev/null 2>&1
         TEXT="Service *$service* was offline or missing port(s) *$ports* on server *${IPCOUNTRY}* ($server_ip). It has been restarted successfully at *${datenow}*."
@@ -834,10 +845,11 @@ sed -i "s|MYCHANNELID|$My_Channel_ID|g" "/etc/deekayvpn/service_checker.sh"
 sed -i "s|MYBOTID|$My_Bot_Key|g" "/etc/deekayvpn/service_checker.sh"
 sed -i "s|IPADDRESS|$IPADDR|g" "/etc/deekayvpn/service_checker.sh"
 sed -i "s|DROPBEARPORT1|$Dropbear_Port1|g" "/etc/deekayvpn/service_checker.sh"
-sed -i "s|DROPBEARPORT2|$Dropbear_Port2|g" "/etc/deekayvpn/service_checker.sh"
+sed -i "s\|DROPBEARPORT2\|\$Dropbear_Port2\|g" "/etc/deekayvpn/service_checker\.sh"
+sed -i "s|WSPORTS|80,8080,8880,2052,2082,2086,2095|g" "/etc/deekayvpn/service_checker.sh"
+sed -i "s|WS_UNITS|ws@80 ws@8080 ws@8880 ws@2052 ws@2082 ws@2086 ws@2095|g" "/etc/deekayvpn/service_checker.sh"
 sed -i "s|STUNNELPORT|$Stunnel_Port|g" "/etc/deekayvpn/service_checker.sh"
 sed -i "s|SSLHPORT|$MainPort|g" "/etc/deekayvpn/service_checker.sh"
-sed -i "s|SOCKSPORT|$WsPort|g" "/etc/deekayvpn/service_checker.sh"
 sed -i "s|SQUIDPORT1|$Squid_Port1|g" "/etc/deekayvpn/service_checker.sh"
 sed -i "s|SQUIDPORT2|$Squid_Port2|g" "/etc/deekayvpn/service_checker.sh"
 sed -i "s|NGINXPORT|$Nginx_Port|g" "/etc/deekayvpn/service_checker.sh"
@@ -1081,12 +1093,7 @@ export DEBIAN_FRONTEND=noninteractive
 iptables -I INPUT -p udp --dport 5300 -j ACCEPT
 iptables -t nat -I PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 5300
 
-# Redirect additional WS ports to MyWSPort
-iptables -t nat -A PREROUTING -p tcp --dport 8080 -j REDIRECT --to-port MyWSPort
-iptables -t nat -A PREROUTING -p tcp --dport 8880 -j REDIRECT --to-port MyWSPort
-iptables -t nat -A PREROUTING -p tcp --dport 2082 -j REDIRECT --to-port MyWSPort
-iptables -t nat -A PREROUTING -p tcp --dport 2086 -j REDIRECT --to-port MyWSPort
-iptables -t nat -A PREROUTING -p tcp --dport 25 -j REDIRECT --to-port MyWSPort
+# WS ports are handled by systemd instances ws@PORT (no iptables redirects)
 
 # Disable IpV6
 echo 1 > /proc/sys/net/ipv6/conf/all/disable_ipv6
@@ -1108,7 +1115,6 @@ deekayz
 sed -i "s|MyTimeZone|$MyVPS_Time|g" /etc/deekaystartup
 sed -i "s|DNS1|$Dns_1|g" /etc/deekaystartup
 sed -i "s|DNS2|$Dns_2|g" /etc/deekaystartup
-sed -i "s|MyWSPort|$WsPort|g" /etc/deekaystartup
 rm -rf /etc/sysctl.d/99*
 
  # Setting our startup script to run every machine boots 
@@ -1210,7 +1216,7 @@ echo "Services & Port Information:" | tee -a log-install.txt | lolcat
 echo "   • Dropbear             : [ON] : $Dropbear_Port1 | $Dropbear_Port2 " | tee -a log-install.txt | lolcat
 echo "   • Squid Proxy          : [ON] : $Squid_Port1 | $Squid_Port2" | tee -a log-install.txt | lolcat
 echo "   • SSL through Dropbear : [ON] : 443" | tee -a log-install.txt | lolcat
-echo "   • SSH Websocket        : [ON] : 443 | $WsPort" | tee -a log-install.txt | lolcat
+echo "   • SSH Websocket        : [ON] : 443 | 80 | 8080 | 8880 | 2052 | 2082 | 2086 | 2095" | tee -a log-install.txt | lolcat
 echo "   • BadVPN               : [ON] : 7300 " | tee -a log-install.txt | lolcat
 echo "   • Hysteria             : [ON] : 20000:50000" | tee -a log-install.txt | lolcat
 echo "   • Nginx                : [ON] : $Nginx_Port" | tee -a log-install.txt | lolcat
@@ -1222,6 +1228,39 @@ echo "" | tee -a log-install.txt | lolcat
 echo "  ★ Other concern and questions of these auto-scripts?" | tee -a log-install.txt | lolcat
 echo "    Direct Messege : https://t.me/guruzgh" | tee -a log-install.txt | lolcat
 echo ""
+
+echo ""
+echo "==================== PORTS SUMMARY (Post-Install) ====================" | tee -a log-install.txt
+echo "Timestamp: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" | tee -a log-install.txt
+echo "" | tee -a log-install.txt
+
+echo "[1/4] Systemd services (WS instances)" | tee -a log-install.txt
+for p in "${WsPorts[@]}"; do
+  systemctl is-active "ws@${p}" >/dev/null 2>&1 && \
+    echo "  ws@${p}: active" | tee -a log-install.txt || \
+    echo "  ws@${p}: NOT active (check: journalctl -u ws@${p} -n 50 --no-pager)" | tee -a log-install.txt
+done
+echo "" | tee -a log-install.txt
+
+echo "[2/4] Listening sockets (TCP/UDP) - filtered" | tee -a log-install.txt
+# Show listeners for the main ports used by this script
+ss -lntup 2>/dev/null | egrep -n ':(22|80|85|299|443|550|666|790|3128|8000|8080|8880|2052|2082|2086|2095|5300|7300|36712)\b' | tee -a log-install.txt || true
+echo "" | tee -a log-install.txt
+
+echo "[3/4] NAT/Firewall rules (iptables -t nat) - relevant lines" | tee -a log-install.txt
+iptables -t nat -S 2>/dev/null | egrep -n '(REDIRECT|DNAT|--dport 53|5300|36712|20000:50000|--dport 443|--dport 80|--dport 85|--dport 8080|--dport 8880|--dport 2052|--dport 2082|--dport 2086|--dport 2095)' | tee -a log-install.txt || true
+echo "" | tee -a log-install.txt
+
+echo "[4/4] Config quick-checks" | tee -a log-install.txt
+echo "  Squid listen ports:" | tee -a log-install.txt
+grep -nE '^\s*http_port\s+' /etc/squid/squid.conf 2>/dev/null | tee -a log-install.txt || true
+echo "  Nginx listen ports:" | tee -a log-install.txt
+grep -nE '^\s*listen\s+' /etc/nginx/conf.d/vps.conf 2>/dev/null | tee -a log-install.txt || true
+echo "  Stunnel accept ports:" | tee -a log-install.txt
+grep -nE '^\s*accept\s*=' /etc/stunnel/stunnel.conf 2>/dev/null | tee -a log-install.txt || true
+echo "======================================================================" | tee -a log-install.txt
+echo "" | tee -a log-install.txt
+
 
 clear
 echo ""
