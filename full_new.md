@@ -1,4 +1,4 @@
-bash <(curl -sL https://raw.githubusercontent.com/eddyme23/FreeNet/master/full.sh)
+bash <(curl -sL https://raw.githubusercontent.com/eddyme23/FreeNet/master/full_new.sh)
 
 SlowDNS Public Key 7fbd1f8aa0abfe15a7903e837f78aba39cf61d36f183bd604daa2fe4ef3b7b59
 
