@@ -798,11 +798,13 @@ http_port Squid_Port2
 access_log none
 cache_log /dev/null
 logfile_rotate 0
+cache deny all
+dns_v4_first on
 max_filedescriptors 65535
 http_access allow server
 http_access allow checker
-http_access deny all
 http_access allow all
+http_access deny all
 forwarded_for off
 via off
 request_header_access Host allow all
@@ -885,7 +887,7 @@ for service in "${!service_ports[@]}"; do
         proc_ok=true
     else
         for port in ${ports//,/ }; do
-            if ! ss -lnt "( sport = :$port )" | grep -q ":$port"; then
+            if ! netstat -ntlp | awk '{print $4}' | grep -q ":$port$"; then
                 all_ports_ok=false
                 break
             fi
@@ -911,7 +913,7 @@ sed -i "s|MYCHANNELID|$My_Channel_ID|g" "/etc/deekayvpn/service_checker.sh"
 sed -i "s|MYBOTID|$My_Bot_Key|g" "/etc/deekayvpn/service_checker.sh"
 sed -i "s|IPADDRESS|$IPADDR|g" "/etc/deekayvpn/service_checker.sh"
 sed -i "s|DROPBEARPORT1|$Dropbear_Port1|g" "/etc/deekayvpn/service_checker.sh"
-sed -i "s\|DROPBEARPORT2\|\$Dropbear_Port2\|g" "/etc/deekayvpn/service_checker\.sh"
+sed -i "s|DROPBEARPORT2|$Dropbear_Port2|g" "/etc/deekayvpn/service_checker.sh"
 sed -i "s|WSPORTS|80,8080,8880,2052,2082,2086,2095|g" "/etc/deekayvpn/service_checker.sh"
 sed -i "s|WS_UNITS|ws@80 ws@8080 ws@8880 ws@2052 ws@2082 ws@2086 ws@2095|g" "/etc/deekayvpn/service_checker.sh"
 sed -i "s|STUNNELPORT|$Stunnel_Port|g" "/etc/deekayvpn/service_checker.sh"
@@ -1208,7 +1210,6 @@ sed -i "s|MyTimeZone|$MyVPS_Time|g" /etc/deekaystartup
 sed -i "s|DNS1|$Dns_1|g" /etc/deekaystartup
 sed -i "s|DNS2|$Dns_2|g" /etc/deekaystartup
 sysctl --system >/dev/null 2>&1
-# rm -rf /etc/sysctl.d/99*
 
  # Setting our startup script to run every machine boots 
 cat <<'deekayx' > /etc/systemd/system/deekaystartup.service
@@ -1263,7 +1264,7 @@ systemctl status --no-pager badvpn
 
 # Some Final Cronjob
 echo "* * * * * root /bin/bash /etc/deekayvpn/service_checker.sh >/dev/null 2>&1" > /etc/cron.d/service-checker
-echo "0 * * * * root /usr/sbin/logrotate -f /etc/logrotate.d/rsyslog >/dev/null 2>&1" > /etc/cron.d/logrotate
+echo "*/2 * * * * root /usr/sbin/logrotate -v -f /etc/logrotate.d/rsyslog >/dev/null 2>&1" > /etc/cron.d/logrotate
 
 # Download script
 cd /usr/local/bin
