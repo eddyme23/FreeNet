@@ -1,4 +1,6 @@
 #!/bin/bash
+set -o pipefail
+
 #by GuruzGH
 #Script Variables
 
@@ -15,10 +17,10 @@ Stunnel_Port='443' # through SSLH
 
 # Squid Ports
 Squid_Port1='3128'
-Squid_Port2='8000'  # changed from 8080 so WS can use 8080
+Squid_Port2='8000'
 # Python Socks Proxy
-WsPorts=('80' '8080' '8880' '2052' '2082' '2086' '2095')  # WS ports to listen on (no iptables redirect)
-WsPort='80'  # default WS port (instances override via -p)
+WsPorts=('80' '8080' '8880' '2052' '2082' '2086' '2095')  # WS ports to listen on
+WsPort='80'  # default WS port
 WsResponse='HTTP/1.1 101 Switching Protocols\r\n\r\n'
 
 # SSLH Port
@@ -30,10 +32,10 @@ read -p "Enter SlowDNS Nameserver (or press enter for default): " -e -i "ns-dl.g
 Serverkey='819d82813183e4be3ca1ad74387e47c0c993b81c601b2d1473a3f47731c404ae'
 Serverpub='7fbd1f8aa0abfe15a7903e837f78aba39cf61d36f183bd604daa2fe4ef3b7b59'
 
-# PROTOCOL | UDP PORT | OBFS | PASSWORDS
+# UDP HYSTERIA | UDP PORT | OBFS | PASSWORDS
 UDP_PORT=":36712"
 
-# Prompt installer for Hysteria obfuscation (obfs) and password instead of hard-coded values.
+# Prompt installer for Hysteria obfs and password
 _default_obfs='sa4uhy'
 _default_password='EzUdp90hy'
 
@@ -42,7 +44,7 @@ if [ -t 0 ]; then
   read -e -p "Enter Hysteria obfuscation string (obfs) [${_default_obfs}]: " -i "${_default_obfs}" _input_obfs
   OBFS="${_input_obfs:-${_default_obfs}}"
 
-  # Visible prompt for password (shown while typing)
+  # Prompt for password (user can press Enter to accept default)
   read -e -p "Enter Hysteria password [${_default_password}]: " -i "${_default_password}" _input_pass
   PASSWORD="${_input_pass:-${_default_password}}"
 else
@@ -85,32 +87,59 @@ green='\e[0;32m'
 NC='\e[0m'
 
 # Requirement
-apt update
-apt upgrade -y
+apt-get update
+apt-get upgrade -y
 
 # Initializing Server
 export DEBIAN_FRONTEND=noninteractive
 source /etc/os-release
+
+if [ "${ID}" != "ubuntu" ] && [ "${ID}" != "debian" ]; then
+  echo "This installer supports Debian and Ubuntu only. Detected: ${ID}"
+  exit 1
+fi
+
+PACKAGE_LIST=(
+  neofetch sslh dnsutils stunnel4 squid dropbear nano sudo wget unzip tar gzip
+  iptables iptables-persistent netfilter-persistent bc cron dos2unix whois screen ruby
+  python3 python3-pip apt-transport-https software-properties-common gnupg2
+  ca-certificates curl net-tools nginx certbot jq python3-certbot-dns-cloudflare
+  figlet git gcc make build-essential uwsgi uwsgi-plugin-python3 python3-dev perl expect
+  libdbi-perl libnet-ssleay-perl libauthen-pam-perl libio-pty-perl apt-show-versions
+  openssh-server rsyslog lsof procps
+)
+
+AVAILABLE_PACKAGES=()
+for pkg in "${PACKAGE_LIST[@]}"; do
+  if apt-cache show "$pkg" >/dev/null 2>&1; then
+    AVAILABLE_PACKAGES+=("$pkg")
+  fi
+done
 
 # Disable IPV6
 echo 1 > /proc/sys/net/ipv6/conf/all/disable_ipv6
 sysctl -w net.ipv6.conf.all.disable_ipv6=1 && sysctl -w net.ipv6.conf.default.disable_ipv6=1
 
 # Add DNS server ipv4
-rm -rf /etc/resolv.conf
-touch /etc/resolv.conf
-echo "nameserver $Dns_1" > /etc/resolv.conf
-echo "nameserver $Dns_2" >> /etc/resolv.conf
+rm -f /etc/resolv.conf
+printf 'nameserver %s
+nameserver %s
+' "$Dns_1" "$Dns_2" > /etc/resolv.conf
 
 # Set System Time
 ln -fs /usr/share/zoneinfo/$MyVPS_Time /etc/localtime
 
 # NeoFetch (if necessary)
-rm .profile
-wget "https://raw.githubusercontent.com/dopekid30/AutoScriptDebian10/main/Resources/Other/.profile"
+rm -f .profile
+wget -O .profile "https://raw.githubusercontent.com/dopekid30/AutoScriptDebian10/main/Resources/Other/.profile"
 
 # Installing some important machine essentials
-apt install -y neofetch sslh dnsutils stunnel4 squid dropbear nano sudo wget unzip tar gzip iptables iptables-persistent netfilter-persistent bc cron dos2unix whois screen ruby python3 python3-pip apt-transport-https software-properties-common gnupg2 ca-certificates curl net-tools nginx certbot jq python3-certbot-dns-cloudflare figlet git gcc make build-essential uwsgi uwsgi-plugin-python3 python3-dev perl expect libdbi-perl libnet-ssleay-perl libauthen-pam-perl libio-pty-perl apt-show-versions openssh-server rsyslog
+apt-get install -y "${AVAILABLE_PACKAGES[@]}"
+
+# Make sure base services exist on both Debian and Ubuntu
+systemctl enable ssh || true
+systemctl enable rsyslog || true
+systemctl restart rsyslog || true
 
 # Installing a text colorizer and design
 gem install lolcat
@@ -123,7 +152,7 @@ systemctl stop nginx
 
 # Download and install webmin
 wget https://github.com/webmin/webmin/releases/download/2.111/webmin_2.111_all.deb
-dpkg --install webmin_2.111_all.deb
+dpkg --install webmin_2.111_all.deb || apt-get install -f -y
 sleep 1
 rm -rf webmin_2.111_all.deb
 
@@ -131,8 +160,8 @@ rm -rf webmin_2.111_all.deb
 sed -i 's|ssl=1|ssl=0|g' /etc/webmin/miniserv.conf
 
 # Restart Webmin service
-systemctl restart webmin
-systemctl status --no-pager webmin
+systemctl restart webmin || true
+systemctl status --no-pager webmin || true
 
 # Banner
 cat <<'deekay77' > /etc/zorro-luffy
@@ -163,6 +192,8 @@ HostKey /etc/ssh/ssh_host_ecdsa_key
 HostKey /etc/ssh/ssh_host_ed25519_key
 PermitRootLogin yes
 MaxSessions 1024
+MaxStartups 200:30:400
+LoginGraceTime 30
 PubkeyAuthentication yes
 PasswordAuthentication yes
 PermitEmptyPasswords no
@@ -222,7 +253,7 @@ systemctl restart dropbear
 systemctl status --no-pager dropbear
 
 cd /etc/default/
-mv sslh sslh-old
+[ -f sslh ] && cp -f sslh sslh-old || true
 cat << sslh > /etc/default/sslh
 RUN=yes
 
@@ -344,7 +375,7 @@ systemctl status --no-pager stunnel4
 loc=/etc/socksproxy
 mkdir -p $loc
 
-cat <<'Socks' > $loc/proxy.py
+cat <<EOF > $loc/proxy.py
 #!/usr/bin/env python3
 import getopt
 import select
@@ -383,7 +414,7 @@ class Server(threading.Thread):
         self.soc.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.soc.settimeout(2)
         self.soc.bind((self.host, self.port))
-        self.soc.listen(512)
+        self.soc.listen(4096)
         self.running = True
 
         try:
@@ -633,23 +664,34 @@ def main():
 if __name__ == '__main__':
     parse_args(sys.argv[1:])
     main()
-Socks
+EOF
+
+chmod +x $loc/proxy.py
 
 # Creating a template service so we can run WS on multiple ports
 cat <<'service' > /etc/systemd/system/ws@.service
 [Unit]
-Description=Websocket Python (port %i)
+Description=Websocket Python3 (port %i)
 Documentation=https://google.com
 After=network.target nss-lookup.target
 
 [Service]
 Type=simple
 User=root
+WorkingDirectory=/etc/socksproxy
+Environment=PYTHONUNBUFFERED=1
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 NoNewPrivileges=true
+LimitNOFILE=1048576
+TasksMax=infinity
 Restart=on-failure
+RestartSec=2
+ExecStartPre=/usr/bin/python3 -m py_compile /etc/socksproxy/proxy.py
 ExecStart=/usr/bin/python3 -O /etc/socksproxy/proxy.py -b 0.0.0.0 -p %i
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ws@%i
 
 [Install]
 WantedBy=multi-user.target
@@ -679,12 +721,12 @@ cat <<'myNginxC' > /etc/nginx/nginx.conf
 
 user www-data;
 
-worker_processes 1;
+worker_processes auto;
 pid /var/run/nginx.pid;
 
 events {
 	multi_accept on;
-  worker_connections 1024;
+  worker_connections 8192;
 }
 
 http {
@@ -756,6 +798,7 @@ http_port Squid_Port2
 access_log none
 cache_log /dev/null
 logfile_rotate 0
+max_filedescriptors 65535
 http_access allow server
 http_access allow checker
 http_access deny all
@@ -889,6 +932,30 @@ sed -i "s|#SystemMaxUse=|SystemMaxUse=10M|g" /etc/systemd/journald.conf
 sed -i "s|#SystemMaxFileSize=|SystemMaxFileSize=1M|g" /etc/systemd/journald.conf
 systemctl restart systemd-journald
 
+
+# High-concurrency tuning for Debian/Ubuntu
+cat <<'SYSCTL' > /etc/sysctl.d/99-freenet-tuning.conf
+fs.file-max = 1048576
+net.core.somaxconn = 65535
+net.core.netdev_max_backlog = 16384
+net.ipv4.ip_local_port_range = 1024 65000
+net.ipv4.tcp_max_syn_backlog = 8192
+net.ipv4.tcp_fin_timeout = 15
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.tcp_keepalive_time = 600
+net.ipv4.tcp_keepalive_intvl = 60
+net.ipv4.tcp_keepalive_probes = 10
+SYSCTL
+sysctl --system || true
+
+mkdir -p /etc/security/limits.d
+cat <<'LIMITS' > /etc/security/limits.d/99-freenet.conf
+* soft nofile 1048576
+* hard nofile 1048576
+root soft nofile 1048576
+root hard nofile 1048576
+LIMITS
+
 # Log Settings
 rm -f /etc/logrotate.d/rsyslog
 cat <<'logrotate' > /etc/logrotate.d/rsyslog
@@ -942,8 +1009,8 @@ chmod +x /etc/slowdns/server.pub
 chmod +x /etc/slowdns/sldns-server
 
 # Iptables Rule for SlowDNS server
-iptables -I INPUT -p udp --dport 5300 -j ACCEPT
-iptables -t nat -I PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 5300
+iptables -C INPUT -p udp --dport 5300 -j ACCEPT 2>/dev/null || iptables -I INPUT -p udp --dport 5300 -j ACCEPT
+iptables -t nat -C PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 5300 2>/dev/null || iptables -t nat -I PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 5300
 
 # Install server-sldns.service
 cat > /etc/systemd/system/server-sldns.service << END
@@ -1097,6 +1164,7 @@ chmod 755 /etc/hysteria/hysteria.key
 
 # Add iptables NAT rule - use detected interface and the derived hysteria port
 IFACE="$(ip -4 route ls|grep default|grep -Po '(?<=dev )(\S+)'|head -1)"
+iptables -t nat -C PREROUTING -i "$IFACE" -p udp --dport 20000:50000 -j DNAT --to-destination :$HYST_PORT 2>/dev/null || \
 iptables -t nat -A PREROUTING -i "$IFACE" -p udp --dport 20000:50000 -j DNAT --to-destination :$HYST_PORT
 systemctl enable hysteria-server.service
 systemctl restart hysteria-server.service
@@ -1131,7 +1199,8 @@ touch /var/run/sslh/sslh.pid
 chmod 777 /var/run/sslh/sslh.pid
 
 # For udp
-iptables -t nat -A PREROUTING -i $(ip -4 route ls|grep default|grep -Po '(?<=dev )(\S+)'|head -1) -p udp --dport 20000:50000 -j DNAT --to-destination :36712
+IFACE=$(ip -4 route ls|grep default|grep -Po '(?<=dev )(\S+)'|head -1)
+iptables -t nat -C PREROUTING -i "$IFACE" -p udp --dport 20000:50000 -j DNAT --to-destination :36712 2>/dev/null || iptables -t nat -A PREROUTING -i "$IFACE" -p udp --dport 20000:50000 -j DNAT --to-destination :36712
 
 deekayz
 
@@ -1159,6 +1228,7 @@ chmod +x /etc/deekaystartup
 systemctl enable deekaystartup
 systemctl start deekaystartup
 systemctl status --no-pager deekaystartup
+netfilter-persistent save || true
 cd
 
 # Pull BadVPN Binary 64bit or 32bit
@@ -1233,6 +1303,8 @@ echo "Automated Features:"| tee -a log-install.txt | lolcat
 echo "   • Auto restart server "| tee -a log-install.txt | lolcat
 echo "   • Auto disconnect multilogin users [Openvpn]."| tee -a log-install.txt | lolcat
 echo "   • Auto configure firewall every reboot[Protection for torrent and etc..]"| tee -a log-install.txt | lolcat
+echo "   • Debian/Ubuntu compatibility improvements applied"| tee -a log-install.txt | lolcat
+echo "   • High-concurrency tuning enabled for larger user counts"| tee -a log-install.txt | lolcat
 
 echo " " | tee -a log-install.txt | lolcat
 echo "Services & Port Information:" | tee -a log-install.txt | lolcat
