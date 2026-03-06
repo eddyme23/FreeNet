@@ -885,7 +885,7 @@ for service in "${!service_ports[@]}"; do
         proc_ok=true
     else
         for port in ${ports//,/ }; do
-            if ! netstat -ntlp | awk '{print $4}' | grep -q ":$port$"; then
+            if ! ss -lnt "( sport = :$port )" | grep -q ":$port"; then
                 all_ports_ok=false
                 break
             fi
@@ -1207,7 +1207,8 @@ deekayz
 sed -i "s|MyTimeZone|$MyVPS_Time|g" /etc/deekaystartup
 sed -i "s|DNS1|$Dns_1|g" /etc/deekaystartup
 sed -i "s|DNS2|$Dns_2|g" /etc/deekaystartup
-rm -rf /etc/sysctl.d/99*
+sysctl --system >/dev/null 2>&1
+# rm -rf /etc/sysctl.d/99*
 
  # Setting our startup script to run every machine boots 
 cat <<'deekayx' > /etc/systemd/system/deekaystartup.service
@@ -1262,7 +1263,7 @@ systemctl status --no-pager badvpn
 
 # Some Final Cronjob
 echo "* * * * * root /bin/bash /etc/deekayvpn/service_checker.sh >/dev/null 2>&1" > /etc/cron.d/service-checker
-echo "*/2 * * * * root /usr/sbin/logrotate -v -f /etc/logrotate.d/rsyslog >/dev/null 2>&1" > /etc/cron.d/logrotate
+echo "0 * * * * root /usr/sbin/logrotate -f /etc/logrotate.d/rsyslog >/dev/null 2>&1" > /etc/cron.d/logrotate
 
 # Download script
 cd /usr/local/bin
