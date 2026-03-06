@@ -42,9 +42,8 @@ if [ -t 0 ]; then
   read -e -p "Enter Hysteria obfuscation string (obfs) [${_default_obfs}]: " -i "${_default_obfs}" _input_obfs
   OBFS="${_input_obfs:-${_default_obfs}}"
 
-  # Prompt for password silently (hidden input). If empty, use default.
-  read -s -p "Enter Hysteria password (press Enter to use default): " _input_pass
-  echo
+  # Visible prompt for password (shown while typing)
+  read -e -p "Enter Hysteria password [${_default_password}]: " -i "${_default_password}" _input_pass
   PASSWORD="${_input_pass:-${_default_password}}"
 else
   # Non-interactive: use any pre-set env values or defaults
@@ -1284,6 +1283,7 @@ echo "  Stunnel accept ports:" | tee -a log-install.txt
 grep -nE '^\s*accept\s*=' /etc/stunnel/stunnel.conf 2>/dev/null | tee -a log-install.txt || true
 echo "======================================================================" | tee -a log-install.txt
 echo "" | tee -a log-install.txt
+
 
 clear
 echo ""
