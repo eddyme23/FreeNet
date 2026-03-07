@@ -94,6 +94,41 @@ apt-get upgrade -y
 export DEBIAN_FRONTEND=noninteractive
 source /etc/os-release
 
+
+
+# =========================================================
+# Debian / Ubuntu compatibility detection
+# =========================================================
+if [ "${ID}" != "ubuntu" ] && [ "${ID}" != "debian" ]; then
+  echo "This installer supports Debian and Ubuntu only. Detected: ${ID}"
+  exit 1
+fi
+
+# Detect service names / paths safely
+SSH_SERVICE="ssh"
+DROPBEAR_SERVICE="dropbear"
+STUNNEL_SERVICE="stunnel4"
+SQUID_SERVICE="squid"
+SSLH_SERVICE="sslh"
+NGINX_SERVICE="nginx"
+
+# Prefer internal-sftp for cross-distro compatibility
+SFTP_SUBSYSTEM="internal-sftp"
+
+# Make sure required directories exist
+mkdir -p /etc/dropbear /etc/stunnel /etc/nginx/conf.d /etc/deekayvpn /var/run/sslh
+
+# Generate Dropbear keys only if missing
+[ -f /etc/dropbear/dropbear_rsa_host_key ] || dropbearkey -t rsa -f /etc/dropbear/dropbear_rsa_host_key
+[ -f /etc/dropbear/dropbear_dss_host_key ] || dropbearkey -t dss -f /etc/dropbear/dropbear_dss_host_key
+[ -f /etc/dropbear/dropbear_ecdsa_host_key ] || dropbearkey -t ecdsa -f /etc/dropbear/dropbear_ecdsa_host_key
+
+# Make sure OpenSSH host keys exist
+ssh-keygen -A >/dev/null 2>&1 || true
+
+# Ensure resolver file exists
+touch /etc/resolv.conf
+
 if [ "${ID}" != "ubuntu" ] && [ "${ID}" != "debian" ]; then
   echo "This installer supports Debian and Ubuntu only. Detected: ${ID}"
   exit 1
@@ -137,7 +172,7 @@ wget -O .profile "https://raw.githubusercontent.com/dopekid30/AutoScriptDebian10
 apt-get install -y "${AVAILABLE_PACKAGES[@]}"
 
 # Make sure base services exist on both Debian and Ubuntu
-systemctl enable ssh || true
+systemctl enable "$SSH_SERVICE" || true
 systemctl enable rsyslog || true
 systemctl restart rsyslog || true
 
@@ -181,11 +216,6 @@ deekay77
 # Removing some duplicated sshd server configs
 rm -f /etc/ssh/sshd_config
 
-# Detect SFTP server path for Debian/Ubuntu
-SFTP_SERVER_PATH="/usr/lib/openssh/sftp-server"
-[ -x /usr/lib/ssh/sftp-server ] && SFTP_SERVER_PATH="/usr/lib/ssh/sftp-server"
-[ -x /usr/libexec/openssh/sftp-server ] && SFTP_SERVER_PATH="/usr/libexec/openssh/sftp-server"
-
 # Creating a SSH server config using cat eof tricks
 cat <<'MySSHConfig' > /etc/ssh/sshd_config
 Port myPORT1
@@ -211,15 +241,15 @@ ClientAliveCountMax 2
 UseDNS no
 Banner /etc/zorro-luffy
 AcceptEnv LANG LC_*
-Subsystem  sftp  SFTP_SERVER_PATH_PLACEHOLDER
+Subsystem sftp SFTP_SUBSYSTEM
 MySSHConfig
 
 sleep 2
 # Now we'll put our ssh ports inside of sshd_config
 sed -i "s|myPORT1|$SSH_Port1|g" /etc/ssh/sshd_config
 sed -i "s|myPORT2|$SSH_Port2|g" /etc/ssh/sshd_config
-sed -i "s|SFTP_SERVER_PATH_PLACEHOLDER|$SFTP_SERVER_PATH|g" /etc/ssh/sshd_config
 
+sed -i "s|SFTP_SUBSYSTEM|$SFTP_SUBSYSTEM|g" /etc/ssh/sshd_config
 # My workaround code to remove `BAD Password error` from passwd command, it will fix password-related error on their ssh accounts.
 sed -i '/password\s*requisite\s*pam_cracklib.s.*/d' /etc/pam.d/common-password
 sed -i 's/use_authtok //g' /etc/pam.d/common-password
@@ -231,8 +261,8 @@ echo '/bin/false' >> /etc/shells
 echo '/usr/sbin/nologin' >> /etc/shells
 
 # Restarting openssh service
-systemctl restart ssh
-systemctl status --no-pager ssh
+systemctl restart "$SSH_SERVICE"
+systemctl status --no-pager "$SSH_SERVICE"
 
 # Removing some duplicate config file
 rm -rf /etc/default/dropbear*
@@ -254,15 +284,9 @@ MyDropbear
 sed -i "s|PORT01|$Dropbear_Port1|g" /etc/default/dropbear
 sed -i "s|PORT02|$Dropbear_Port2|g" /etc/default/dropbear
 
-# Ensure dropbear host keys exist
-mkdir -p /etc/dropbear
-[ -f /etc/dropbear/dropbear_rsa_host_key ] || dropbearkey -t rsa -f /etc/dropbear/dropbear_rsa_host_key >/dev/null 2>&1
-[ -f /etc/dropbear/dropbear_dss_host_key ] || dropbearkey -t dss -f /etc/dropbear/dropbear_dss_host_key >/dev/null 2>&1 || true
-[ -f /etc/dropbear/dropbear_ecdsa_host_key ] || dropbearkey -t ecdsa -f /etc/dropbear/dropbear_ecdsa_host_key >/dev/null 2>&1 || true
-
 # Restarting dropbear service
-systemctl restart dropbear
-systemctl status --no-pager dropbear
+systemctl restart "$DROPBEAR_SERVICE"
+systemctl status --no-pager "$DROPBEAR_SERVICE"
 
 cd /etc/default/
 [ -f sslh ] && cp -f sslh sslh-old || true
@@ -282,10 +306,10 @@ chmod 777 /var/run/sslh/sslh.pid
 
 # Restart service
 systemctl daemon-reload
-systemctl enable sslh
-systemctl start sslh
-systemctl restart sslh
-systemctl status --no-pager sslh
+systemctl enable "$SSLH_SERVICE"
+systemctl start "$SSLH_SERVICE"
+systemctl restart "$SSLH_SERVICE"
+systemctl status --no-pager "$SSLH_SERVICE"
 cd
 
 # Stunnel
@@ -379,9 +403,9 @@ sed -i "s|Stunnel_Port|$Stunnel_Port|g" /etc/stunnel/stunnel.conf
 sed -i "s|MainPort|$MainPort|g" /etc/stunnel/stunnel.conf
 
 # Restarting stunnel service
-systemctl restart stunnel4
-systemctl enable stunnel4
-systemctl status --no-pager stunnel4
+systemctl restart "$STUNNEL_SERVICE"
+systemctl enable "$STUNNEL_SERVICE"
+systemctl status --no-pager "$STUNNEL_SERVICE"
 
 # Setting Up Socks
 loc=/etc/socksproxy
@@ -793,8 +817,8 @@ cd
 sed -i "s|Nginx_Port|$Nginx_Port|g" /etc/nginx/conf.d/vps.conf
 
 # Restarting nginx
-systemctl restart nginx
-systemctl status --no-pager nginx
+systemctl restart "$NGINX_SERVICE"
+systemctl status --no-pager "$NGINX_SERVICE"
 
 # Removing Duplicate Squid config
 rm -rf /etc/squid/squid.con*
@@ -813,10 +837,8 @@ logfile_rotate 0
 max_filedescriptors 65535
 http_access allow server
 http_access allow checker
-http_access allow all
 http_access deny all
-cache deny all
-dns_v4_first on
+http_access allow all
 forwarded_for off
 via off
 request_header_access Host allow all
@@ -841,8 +863,8 @@ sed -i "s|Squid_Port2|$Squid_Port2|g" /etc/squid/squid.conf
 
 # Starting Proxy server
 echo -e "Restarting Squid Proxy server..."
-systemctl restart squid
-systemctl status --no-pager squid
+systemctl restart "$SQUID_SERVICE"
+systemctl status --no-pager "$SQUID_SERVICE"
 
 # Make a folder
 mkdir -p /etc/deekayvpn
@@ -925,7 +947,7 @@ sed -i "s|MYCHANNELID|$My_Channel_ID|g" "/etc/deekayvpn/service_checker.sh"
 sed -i "s|MYBOTID|$My_Bot_Key|g" "/etc/deekayvpn/service_checker.sh"
 sed -i "s|IPADDRESS|$IPADDR|g" "/etc/deekayvpn/service_checker.sh"
 sed -i "s|DROPBEARPORT1|$Dropbear_Port1|g" "/etc/deekayvpn/service_checker.sh"
-sed -i "s|DROPBEARPORT2|$Dropbear_Port2|g" "/etc/deekayvpn/service_checker.sh"
+sed -i "s\|DROPBEARPORT2\|\$Dropbear_Port2\|g" "/etc/deekayvpn/service_checker\.sh"
 sed -i "s|WSPORTS|80,8080,8880,2052,2082,2086,2095|g" "/etc/deekayvpn/service_checker.sh"
 sed -i "s|WS_UNITS|ws@80 ws@8080 ws@8880 ws@2052 ws@2082 ws@2086 ws@2095|g" "/etc/deekayvpn/service_checker.sh"
 sed -i "s|STUNNELPORT|$Stunnel_Port|g" "/etc/deekayvpn/service_checker.sh"
@@ -1221,7 +1243,7 @@ deekayz
 sed -i "s|MyTimeZone|$MyVPS_Time|g" /etc/deekaystartup
 sed -i "s|DNS1|$Dns_1|g" /etc/deekaystartup
 sed -i "s|DNS2|$Dns_2|g" /etc/deekaystartup
-sysctl --system >/dev/null 2>&1
+rm -rf /etc/sysctl.d/99*
 
  # Setting our startup script to run every machine boots 
 cat <<'deekayx' > /etc/systemd/system/deekaystartup.service
@@ -1275,385 +1297,404 @@ systemctl start badvpn
 systemctl status --no-pager badvpn
 
 # Some Final Cronjob
-echo "* * * * * root /bin/bash /etc/deekayvpn/service_checker.sh >/dev/null 2>&1" > /etc/cron.d/service-checker
+# Enable later after confirming all services work on this OS
+# echo "* * * * * root /bin/bash /etc/deekayvpn/service_checker.sh >/dev/null 2>&1" > /etc/cron.d/service-checker
 echo "*/2 * * * * root /usr/sbin/logrotate -v -f /etc/logrotate.d/rsyslog >/dev/null 2>&1" > /etc/cron.d/logrotate
 
-# Install bundled menu
-cat > /usr/local/bin/menu <<'MENU_EOF'
+# Install bundled premium menu
+cd /usr/local/bin
+cat > /usr/local/bin/menu <<'EOF_MENU'
 #!/bin/bash
 
-# GuruzGH Admin Dashboard Menu
-# Designed around the uploaded installer's protocols/services
+# GURUZGH Premium VPS Menu
 
-set +e
+RED='[1;31m'
+GREEN='[1;32m'
+YELLOW='[1;33m'
+BLUE='[1;34m'
+MAGENTA='[1;35m'
+CYAN='[1;36m'
+WHITE='[1;37m'
+NC='[0m'
 
-TZ_DEFAULT="Africa/Accra"
-WS_PORTS=(80 8080 8880 2052 2082 2086 2095)
-MAIN_SERVICES=(ssh dropbear sslh stunnel4 squid nginx server-sldns hysteria-server badvpn)
+SERVER_IP=$(curl -4 -s --max-time 2 ipv4.icanhazip.com 2>/dev/null)
+[ -z "$SERVER_IP" ] && SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+[ -z "$SERVER_IP" ] && SERVER_IP="Unavailable"
 
-pause() {
-  echo
-  read -rp "Press Enter to continue..." _
+TIMEZONE=$(cat /etc/timezone 2>/dev/null || readlink /etc/localtime 2>/dev/null | sed 's|.*/zoneinfo/||')
+[ -z "$TIMEZONE" ] && TIMEZONE="System Default"
+
+cpu_usage() {
+  top -bn1 2>/dev/null | awk -F',' '/Cpu\(s\)/ {gsub("%us","",$1); gsub(" ","",$1); split($1,a,":"); print int(a[2]+0) "%"}'
 }
 
-header() {
-  clear
-  local ip now status_line
-  ip=$(hostname -I 2>/dev/null | awk '{print $1}')
-  [ -z "$ip" ] && ip=$(curl -4 -fsS --max-time 3 ifconfig.me 2>/dev/null || echo "unknown")
-  now=$(TZ="$TZ_DEFAULT" date '+%Y-%m-%d %H:%M:%S %Z')
-  status_line="$(service_state ssh SSH) | $(service_state dropbear DROPBEAR) | $(ws_state) | $(service_state stunnel4 SSL) | $(service_state squid SQUID) | $(service_state server-sldns DNS) | $(service_state hysteria-server UDP)"
-
-  cat <<MENU
-╔══════════════════════════════════════════════════════════════╗
-║                    GURUZGH ADMIN DASHBOARD                  ║
-╠══════════════════════════════════════════════════════════════╣
-║  Server : ${ip:-unknown}
-║  Time   : ${now}
-║  Status : ${status_line}
-╠══════════════════════════════════════════════════════════════╣
-║                      ACCOUNT MANAGEMENT                      ║
-║  [1] Create SSH User                                        ║
-║  [2] Delete SSH User                                        ║
-║  [3] Extend User Expiry                                     ║
-║  [4] Check Online Users                                     ║
-║  [5] List All Users                                         ║
-╠══════════════════════════════════════════════════════════════╣
-║                      SERVICE CONTROL                         ║
-║  [6] Restart All Services                                   ║
-║  [7] Restart SSH / Dropbear                                 ║
-║  [8] Restart WebSocket                                      ║
-║  [9] Restart SSL / Stunnel / SSLH                           ║
-║ [10] Restart Squid / Proxy                                  ║
-║ [11] Restart SlowDNS / Hysteria / BadVPN                    ║
-╠══════════════════════════════════════════════════════════════╣
-║                    MONITORING & TOOLS                        ║
-║ [12] Server Dashboard                                       ║
-║ [13] Show Open Ports                                        ║
-║ [14] Show Firewall / NAT Rules                              ║
-║ [15] View Service Logs                                      ║
-║ [16] View Hysteria Config                                   ║
-║ [17] Protocol Guide                                         ║
-╠══════════════════════════════════════════════════════════════╣
-║                      SYSTEM OPTIONS                          ║
-║ [18] Backup Config Snapshot                                 ║
-║ [19] Reboot Server                                          ║
-║  [0] Exit                                                   ║
-╚══════════════════════════════════════════════════════════════╝
-MENU
-  echo
+ram_usage() {
+  free -m 2>/dev/null | awk '/Mem:/ {printf "%sMB / %sMB", $3,$2}'
 }
 
-service_state() {
-  local svc="$1" label="$2"
-  if systemctl is-active --quiet "$svc" 2>/dev/null; then
-    printf '%s' "$label"
-  else
-    printf '%s!' "$label"
-  fi
+bar() {
+  local pct="$1"
+  local width=20
+  local fill=$((pct * width / 100))
+  local empty=$((width - fill))
+  printf "["
+  for ((i=0;i<fill;i++)); do printf "■"; done
+  for ((i=0;i<empty;i++)); do printf "·"; done
+  printf "]"
 }
 
-ws_state() {
-  if systemctl is-active --quiet ws@80 2>/dev/null; then
-    printf 'WS'
-  else
-    printf 'WS!'
-  fi
+svc() {
+  systemctl is-active --quiet "$1" 2>/dev/null && echo -e "${GREEN}ONLINE${NC}" || echo -e "${RED}OFFLINE${NC}"
 }
 
-require_root() {
-  if [ "$(id -u)" -ne 0 ]; then
-    echo "Run this menu as root."
-    pause
-    return 1
-  fi
-  return 0
+count_port() {
+  local port="$1"
+  ss -Htan state established "( sport = :$port )" 2>/dev/null | wc -l
+}
+
+sum_ports() {
+  local total=0
+  for p in "$@"; do
+    n=$(count_port "$p")
+    total=$((total + n))
+  done
+  echo "$total"
+}
+
+ssh_users() {
+  who 2>/dev/null | wc -l
 }
 
 create_user() {
-  require_root || return
-  local user pass days expire
+  clear
+  echo -e "${CYAN}Create SSH User${NC}"
+  echo "--------------------------------"
   read -rp "Username: " user
-  [ -z "$user" ] && { echo "Username required."; pause; return; }
-  if id "$user" >/dev/null 2>&1; then
-    echo "User already exists."
-    pause
-    return
+  read -rsp "Password: " pass; echo
+  read -rp "Valid for (days): " days
+
+  if id "$user" &>/dev/null; then
+    echo -e "${RED}User already exists.${NC}"
+  else
+    useradd -e "$(date -d "+$days days" +%Y-%m-%d)" -s /bin/false -M "$user" && \
+    echo "$user:$pass" | chpasswd
+    echo -e "${GREEN}User created successfully.${NC}"
   fi
-  read -rp "Password: " pass
-  read -rp "Valid for how many days?: " days
-  [[ "$days" =~ ^[0-9]+$ ]] || days=30
-  expire=$(date -d "+$days days" +%Y-%m-%d)
-  useradd -e "$expire" -s /bin/false -M "$user" && echo "$user:$pass" | chpasswd
-  echo
-  echo "User created: $user"
-  echo "Expires: $expire"
-  pause
+  read -rp "Press ENTER to return..."
 }
 
 delete_user() {
-  require_root || return
-  local user
+  clear
+  echo -e "${CYAN}Delete SSH User${NC}"
+  echo "--------------------------------"
   read -rp "Username to delete: " user
-  [ -z "$user" ] && { echo "Username required."; pause; return; }
-  if ! id "$user" >/dev/null 2>&1; then
-    echo "User not found."
-    pause
-    return
+  if id "$user" &>/dev/null; then
+    userdel -r "$user" 2>/dev/null || userdel "$user"
+    echo -e "${GREEN}User deleted.${NC}"
+  else
+    echo -e "${RED}User not found.${NC}"
   fi
-  userdel -r "$user" 2>/dev/null || userdel "$user"
-  echo "Deleted user: $user"
-  pause
+  read -rp "Press ENTER to return..."
 }
 
 extend_user() {
-  require_root || return
-  local user days current epoch expire
-  read -rp "Username to extend: " user
-  id "$user" >/dev/null 2>&1 || { echo "User not found."; pause; return; }
-  read -rp "Extend by how many days?: " days
-  [[ "$days" =~ ^[0-9]+$ ]] || days=30
-  current=$(chage -l "$user" | awk -F': ' '/Account expires/ {print $2}')
-  if [ "$current" = "never" ] || [ -z "$current" ]; then
-    expire=$(date -d "+$days days" +%Y-%m-%d)
+  clear
+  echo -e "${CYAN}Extend User Expiry${NC}"
+  echo "--------------------------------"
+  read -rp "Username: " user
+  read -rp "Extend by how many days: " days
+  if id "$user" &>/dev/null; then
+    current=$(chage -l "$user" 2>/dev/null | awk -F": " '/Account expires/ {print $2}')
+    if [ "$current" = "never" ] || [ -z "$current" ]; then
+      new_exp=$(date -d "+$days days" +%Y-%m-%d)
+    else
+      new_exp=$(date -d "$current +$days days" +%Y-%m-%d)
+    fi
+    chage -E "$new_exp" "$user"
+    echo -e "${GREEN}Expiry updated to $new_exp${NC}"
   else
-    epoch=$(date -d "$current +$days days" +%Y-%m-%d 2>/dev/null)
-    expire=${epoch:-$(date -d "+$days days" +%Y-%m-%d)}
+    echo -e "${RED}User not found.${NC}"
   fi
-  chage -E "$expire" "$user"
-  echo "New expiry for $user: $expire"
-  pause
+  read -rp "Press ENTER to return..."
 }
 
-check_online_users() {
+online_users() {
   clear
-  echo "=== Logged in users (who) ==="
-  who || true
+  echo -e "${CYAN}Online Users${NC}"
+  echo "--------------------------------"
+  who 2>/dev/null || echo "No active sessions found."
   echo
-  echo "=== SSH sessions (sshd/dropbear) ==="
-  ps -ef | egrep 'sshd:|dropbear' | grep -v grep || true
-  pause
+  echo "Active SSH/Dropbear connections:"
+  ss -tnp 2>/dev/null | egrep ':(22|299|550|790)' || true
+  read -rp "Press ENTER to return..."
 }
 
-list_all_users() {
+list_users() {
   clear
-  echo "=== VPN/SSH Users ==="
-  awk -F: '$3 >= 1000 && $1 != "nobody" {print $1}' /etc/passwd 2>/dev/null || true
-  echo
-  echo "=== Expiry ==="
-  while IFS=: read -r u _ uid _; do
-    [ "$uid" -ge 1000 ] || continue
-    exp=$(chage -l "$u" 2>/dev/null | awk -F': ' '/Account expires/ {print $2}')
-    printf '%-20s %s\n' "$u" "${exp:-unknown}"
-  done </etc/passwd
-  pause
+  echo -e "${CYAN}System Users${NC}"
+  echo "--------------------------------"
+  awk -F: '$3 >= 1000 && $1 != "nobody" {print $1}' /etc/passwd 2>/dev/null
+  read -rp "Press ENTER to return..."
 }
 
 restart_all() {
-  require_root || return
-  for s in ssh dropbear sslh stunnel4 squid nginx server-sldns hysteria-server badvpn; do
-    systemctl restart "$s" 2>/dev/null || true
+  systemctl restart "$SSH_SERVICE" dropbear sslh stunnel4 squid nginx server-sldns hysteria-server badvpn 2>/dev/null || true
+  for p in 80 8080 8880 2052 2082 2086 2095; do
+    systemctl restart ws@"$p" 2>/dev/null || true
   done
-  for p in "${WS_PORTS[@]}"; do
-    systemctl restart "ws@$p" 2>/dev/null || true
-  done
-  echo "All core services restarted."
-  pause
+  echo -e "${GREEN}All core services restarted.${NC}"
+  read -rp "Press ENTER to return..."
 }
 
 restart_ssh_dropbear() {
-  require_root || return
-  systemctl restart ssh dropbear
-  echo "SSH and Dropbear restarted."
-  pause
+  systemctl restart "$SSH_SERVICE" dropbear
+  echo -e "${GREEN}SSH / Dropbear restarted.${NC}"
+  read -rp "Press ENTER to return..."
 }
 
 restart_ws() {
-  require_root || return
-  for p in "${WS_PORTS[@]}"; do
-    systemctl restart "ws@$p" 2>/dev/null || true
+  for p in 80 8080 8880 2052 2082 2086 2095; do
+    systemctl restart ws@"$p" 2>/dev/null || true
   done
-  echo "WebSocket services restarted."
-  pause
+  echo -e "${GREEN}WebSocket services restarted.${NC}"
+  read -rp "Press ENTER to return..."
 }
 
 restart_ssl() {
-  require_root || return
-  systemctl restart stunnel4 sslh
-  echo "SSL / Stunnel / SSLH restarted."
-  pause
+  systemctl restart "$STUNNEL_SERVICE" sslh
+  echo -e "${GREEN}SSL / Stunnel / SSLH restarted.${NC}"
+  read -rp "Press ENTER to return..."
 }
 
 restart_proxy() {
-  require_root || return
-  systemctl restart squid nginx
-  echo "Squid / Proxy services restarted."
-  pause
+  systemctl restart "$SQUID_SERVICE" nginx
+  echo -e "${GREEN}Squid / Proxy restarted.${NC}"
+  read -rp "Press ENTER to return..."
 }
 
 restart_udp() {
-  require_root || return
   systemctl restart server-sldns hysteria-server badvpn 2>/dev/null || true
-  echo "SlowDNS / Hysteria / BadVPN restarted."
-  pause
+  echo -e "${GREEN}SlowDNS / Hysteria / BadVPN restarted.${NC}"
+  read -rp "Press ENTER to return..."
 }
 
-dashboard() {
+show_dashboard() {
   clear
-  echo "=== Service Status ==="
-  for s in ssh dropbear sslh stunnel4 squid nginx server-sldns hysteria-server badvpn; do
-    printf '%-18s : ' "$s"
-    systemctl is-active "$s" 2>/dev/null || echo inactive
-  done
+  cpu_num=$(cpu_usage | tr -d '%')
+  [ -z "$cpu_num" ] && cpu_num=0
+
+  echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
+  echo -e "${CYAN}║                    GURUZGH ADMIN DASHBOARD                  ║${NC}"
+  echo -e "${CYAN}╠══════════════════════════════════════════════════════════════╣${NC}"
+  printf " %-18s : %s
+" "Server IP" "$SERVER_IP"
+  printf " %-18s : %s
+" "Timezone" "$TIMEZONE"
+  printf " %-18s : %s
+" "Time" "$(date)"
+  printf " %-18s : %s %s
+" "CPU Usage" "$(cpu_usage)" "$(bar "$cpu_num")"
+  printf " %-18s : %s
+" "RAM Usage" "$(ram_usage)"
+  printf " %-18s : %s
+" "SSH Users Online" "$(ssh_users)"
+  echo -e "${CYAN}╠══════════════════════════════════════════════════════════════╣${NC}"
+  echo -e " ${YELLOW}SERVICE STATUS${NC}"
+  printf " %-18s : %b
+" "SSH"        "$(svc ssh)"
+  printf " %-18s : %b
+" "Dropbear"   "$(svc dropbear)"
+  printf " %-18s : %b
+" "WebSocket"  "$(svc ws@80)"
+  printf " %-18s : %b
+" "Stunnel"    "$(svc stunnel4)"
+  printf " %-18s : %b
+" "SSLH"       "$(svc sslh)"
+  printf " %-18s : %b
+" "Squid"      "$(svc squid)"
+  printf " %-18s : %b
+" "SlowDNS"    "$(svc server-sldns)"
+  printf " %-18s : %b
+" "Hysteria"   "$(svc hysteria-server)"
+  printf " %-18s : %b
+" "BadVPN"     "$(svc badvpn)"
+  echo -e "${CYAN}╠══════════════════════════════════════════════════════════════╣${NC}"
+  echo -e " ${YELLOW}LIVE CONNECTION COUNTS${NC}"
+  printf " %-18s : %s
+" "SSH (22,299)" "$(sum_ports 22 299)"
+  printf " %-18s : %s
+" "Dropbear"     "$(sum_ports 790 550)"
+  printf " %-18s : %s
+" "WebSocket"    "$(sum_ports 80 8080 8880 2052 2082 2086 2095)"
+  printf " %-18s : %s
+" "SSL :443"     "$(count_port 443)"
+  printf " %-18s : %s
+" "Squid"        "$(sum_ports 3128 8000)"
+  printf " %-18s : %s
+" "SlowDNS"      "$(ss -Huan "( sport = :5300 )" 2>/dev/null | wc -l)"
+  printf " %-18s : %s
+" "Hysteria UDP" "$(ss -Huan "( sport = :36712 )" 2>/dev/null | wc -l)"
+  echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
   echo
-  echo "=== WebSocket Status ==="
-  for p in "${WS_PORTS[@]}"; do
-    printf 'ws@%-5s : ' "$p"
-    systemctl is-active "ws@$p" 2>/dev/null || echo inactive
-  done
-  echo
-  echo "=== Load / Memory / Disk ==="
-  uptime
-  free -h
-  df -h /
-  pause
+  read -rp "Press ENTER to return..."
 }
 
 show_ports() {
   clear
-  ss -lntup 2>/dev/null | egrep ':(22|299|443|550|666|790|80|8080|8880|2052|2082|2086|2095|3128|8000|85|5300|7300|36712)\b' || true
-  pause
+  echo -e "${CYAN}Open Ports${NC}"
+  echo "--------------------------------"
+  ss -lntup 2>/dev/null | egrep ':(22|299|443|550|666|790|85|80|8080|8880|2052|2082|2086|2095|3128|8000|5300|7300|36712)' || true
+  read -rp "Press ENTER to return..."
 }
 
-show_firewall() {
+show_nat() {
   clear
-  echo "=== iptables filter ==="
-  iptables -S 2>/dev/null || true
+  echo -e "${CYAN}Firewall / NAT Rules${NC}"
+  echo "--------------------------------"
+  iptables -t nat -S 2>/dev/null || echo "No NAT rules found."
   echo
-  echo "=== iptables nat ==="
-  iptables -t nat -S 2>/dev/null || true
-  pause
+  iptables -S 2>/dev/null || true
+  read -rp "Press ENTER to return..."
 }
 
 view_logs() {
   clear
-  echo "Select log source:"
-  echo "1) ws@80"
-  echo "2) ssh"
-  echo "3) dropbear"
-  echo "4) stunnel4"
-  echo "5) sslh"
-  echo "6) squid"
-  echo "7) hysteria-server"
-  echo "8) server-sldns"
-  echo "0) Back"
-  read -rp "Choice: " c
-  case "$c" in
-    1) journalctl -u ws@80 -n 80 --no-pager ;;
-    2) journalctl -u ssh -n 80 --no-pager ;;
-    3) journalctl -u dropbear -n 80 --no-pager ;;
-    4) journalctl -u stunnel4 -n 80 --no-pager ;;
-    5) journalctl -u sslh -n 80 --no-pager ;;
-    6) journalctl -u squid -n 80 --no-pager ;;
-    7) journalctl -u hysteria-server -n 80 --no-pager ;;
-    8) journalctl -u server-sldns -n 80 --no-pager ;;
-    *) return ;;
+  echo -e "${CYAN}Service Logs${NC}"
+  echo "--------------------------------"
+  echo "1) SSH"
+  echo "2) Dropbear"
+  echo "3) WebSocket"
+  echo "4) Stunnel"
+  echo "5) SSLH"
+  echo "6) Squid"
+  echo "7) Hysteria"
+  echo "8) SlowDNS"
+  read -rp "Choose service: " lopt
+  case "$lopt" in
+    1) journalctl -u ssh -n 50 --no-pager ;;
+    2) journalctl -u dropbear -n 50 --no-pager ;;
+    3) journalctl -u ws@80 -n 50 --no-pager ;;
+    4) journalctl -u stunnel4 -n 50 --no-pager ;;
+    5) journalctl -u sslh -n 50 --no-pager ;;
+    6) journalctl -u squid -n 50 --no-pager ;;
+    7) journalctl -u hysteria-server -n 50 --no-pager ;;
+    8) journalctl -u server-sldns -n 50 --no-pager ;;
+    *) echo "Invalid option." ;;
   esac
-  pause
+  read -rp "Press ENTER to return..."
 }
 
 view_hysteria() {
   clear
-  if [ -f /etc/hysteria/config.json ]; then
-    cat /etc/hysteria/config.json
-  else
-    echo "Hysteria config not found."
-  fi
-  pause
+  echo -e "${CYAN}Hysteria Config${NC}"
+  echo "--------------------------------"
+  cat /etc/hysteria/config.json 2>/dev/null || echo "Config not found."
+  read -rp "Press ENTER to return..."
 }
 
 protocol_guide() {
   clear
-  cat <<EOF2
-=== Protocol Guide ===
+  cat <<GUIDE
+GURUZGH PROTOCOL GUIDE
+--------------------------------
 SSH        : 22, 299
 Dropbear   : 790, 550
-SSL        : 443 via stunnel -> 666 via sslh
+Stunnel    : 443
+SSLH       : 666
 WebSocket  : 80, 8080, 8880, 2052, 2082, 2086, 2095
 Squid      : 3128, 8000
-SlowDNS    : UDP 53 redirected to 5300
-Hysteria   : UDP 20000:50000 -> 36712
+SlowDNS    : 5300
+Hysteria   : 36712/UDP
 BadVPN     : 7300
 Nginx      : 85
 
-Flow examples:
-- SSL SSH: client -> 443 -> stunnel -> 666 -> sslh -> dropbear
-- WS SSH : client -> WS port -> proxy.py -> dropbear 790
-- SlowDNS: client DNS -> 53 -> 5300 -> SSH 299
-EOF2
-  pause
+FLOW EXAMPLES
+--------------------------------
+SSL  : Client -> 443 -> Stunnel -> 666 -> SSLH -> Dropbear/WS
+WS   : Client -> WS Port -> Python WS -> Dropbear
+UDP  : Client -> UDP Range -> NAT -> 36712 -> Hysteria
+GUIDE
+  read -rp "Press ENTER to return..."
 }
 
 backup_snapshot() {
-  require_root || return
-  local ts out
-  ts=$(date +%Y%m%d_%H%M%S)
-  out="/root/guruzgh_snapshot_${ts}.tar.gz"
-  tar -czf "$out" \
-    /etc/ssh/sshd_config \
-    /etc/default/dropbear \
-    /etc/default/sslh \
-    /etc/stunnel/stunnel.conf \
-    /etc/squid/squid.conf \
-    /etc/hysteria/config.json \
-    /etc/systemd/system/ws@.service \
-    /etc/socksproxy/proxy.py \
-    /etc/systemd/system/server-sldns.service \
-    /etc/systemd/system/badvpn.service \
-    /etc/nginx/nginx.conf \
-    /etc/nginx/conf.d/vps.conf 2>/dev/null
-  echo "Snapshot saved to: $out"
-  pause
+  out="/root/guruzgh_snapshot_$(date +%Y%m%d_%H%M%S).tar.gz"
+  tar -czf "$out" /etc/ssh /etc/default/dropbear /etc/stunnel /etc/squid /etc/hysteria /etc/systemd/system/ws@.service /etc/deekayvpn 2>/dev/null
+  echo -e "${GREEN}Snapshot saved:${NC} $out"
+  read -rp "Press ENTER to return..."
 }
 
-reboot_server() {
-  require_root || return
-  read -rp "Reboot server now? [y/N]: " ans
-  case "$ans" in
-    y|Y) reboot ;;
-    *) ;;
-  esac
+draw_menu() {
+  clear
+  echo -e "${CYAN}╔══════════════════════════════════════════════════════════════╗${NC}"
+  echo -e "${CYAN}║                    GURUZGH ADMIN DASHBOARD                  ║${NC}"
+  echo -e "${CYAN}╠══════════════════════════════════════════════════════════════╣${NC}"
+  printf " %-8s: %s
+" "Server" "$SERVER_IP"
+  printf " %-8s: %s
+" "Time" "$(date '+%Y-%m-%d %H:%M:%S')"
+  echo -e " ${WHITE}Status :${NC} SSH | DROPBEAR | WS | SSL | SQUID | DNS | UDP"
+  echo -e "${CYAN}╠══════════════════════════════════════════════════════════════╣${NC}"
+  echo -e " ${YELLOW}                     ACCOUNT MANAGEMENT${NC}"
+  echo "  [1] Create SSH User"
+  echo "  [2] Delete SSH User"
+  echo "  [3] Extend User Expiry"
+  echo "  [4] Check Online Users"
+  echo "  [5] List All Users"
+  echo -e "${CYAN}╠══════════════════════════════════════════════════════════════╣${NC}"
+  echo -e " ${YELLOW}                     SERVICE CONTROL${NC}"
+  echo "  [6] Restart All Services"
+  echo "  [7] Restart SSH / Dropbear"
+  echo "  [8] Restart WebSocket"
+  echo "  [9] Restart SSL / Stunnel / SSLH"
+  echo " [10] Restart Squid / Proxy"
+  echo " [11] Restart SlowDNS / Hysteria / BadVPN"
+  echo -e "${CYAN}╠══════════════════════════════════════════════════════════════╣${NC}"
+  echo -e " ${YELLOW}                   MONITORING & TOOLS${NC}"
+  echo " [12] Server Dashboard"
+  echo " [13] Show Open Ports"
+  echo " [14] Show Firewall / NAT Rules"
+  echo " [15] View Service Logs"
+  echo " [16] View Hysteria Config"
+  echo " [17] Protocol Guide"
+  echo -e "${CYAN}╠══════════════════════════════════════════════════════════════╣${NC}"
+  echo -e " ${YELLOW}                     SYSTEM OPTIONS${NC}"
+  echo " [18] Backup Config Snapshot"
+  echo " [19] Reboot Server"
+  echo "  [0] Exit"
+  echo -e "${CYAN}╚══════════════════════════════════════════════════════════════╝${NC}"
+  echo
 }
 
 while true; do
-  header
+  draw_menu
   read -rp "Select option : " opt
   case "$opt" in
     1) create_user ;;
     2) delete_user ;;
     3) extend_user ;;
-    4) check_online_users ;;
-    5) list_all_users ;;
+    4) online_users ;;
+    5) list_users ;;
     6) restart_all ;;
     7) restart_ssh_dropbear ;;
     8) restart_ws ;;
     9) restart_ssl ;;
     10) restart_proxy ;;
     11) restart_udp ;;
-    12) dashboard ;;
+    12) show_dashboard ;;
     13) show_ports ;;
-    14) show_firewall ;;
+    14) show_nat ;;
     15) view_logs ;;
     16) view_hysteria ;;
     17) protocol_guide ;;
     18) backup_snapshot ;;
-    19) reboot_server ;;
+    19) reboot ;;
     0) exit 0 ;;
     *) echo "Invalid option."; sleep 1 ;;
   esac
 done
 
-MENU_EOF
+EOF_MENU
 chmod +x /usr/local/bin/menu
 cp /usr/local/bin/menu /usr/bin/menu
 cp /usr/local/bin/menu /usr/bin/Menu
