@@ -1,4 +1,20 @@
 #!/bin/bash
+clear
+echo "============================================================"
+echo "              Guruz GH SSH Script Installer"
+echo "============================================================"
+echo ""
+echo "Recommended Operating Systems:"
+echo ""
+echo "  ✔ Ubuntu 22.04 / 24.04   (Recommended)"
+echo "  ✔ Debian 12              (Supported)"
+echo ""
+echo "  ⚠ Debian 13 is not supported for this script."
+echo "  Please use Ubuntu 22/24 or Debian 12 for best results."
+echo ""
+echo "============================================================"
+sleep 3
+
 set -o pipefail
 
 #by GuruzGH
@@ -93,7 +109,14 @@ apt-get upgrade -y
 # Initializing Server
 export DEBIAN_FRONTEND=noninteractive
 source /etc/os-release
-
+if [ "$ID" = "debian" ] && [ "$VERSION_ID" = "13" ]; then
+  echo ""
+  echo "Debian 13 detected."
+  echo "This OS is not fully supported yet."
+  echo "Please install Debian 12 or Ubuntu 22/24."
+  echo ""
+  exit 1
+fi
 
 
 # =========================================================
@@ -160,9 +183,13 @@ nameserver %s
 # Set System Time
 ln -fs /usr/share/zoneinfo/$MyVPS_Time /etc/localtime
 
-# NeoFetch (if necessary)
-rm -f .profile
-wget -O .profile "https://raw.githubusercontent.com/dopekid30/AutoScriptDebian10/main/Resources/Other/.profile"
+# Login profile / banner
+cat > /root/.profile <<'EOF_PROFILE'
+# Guruz GH profile
+clear
+echo "Script By Guruz GH"
+echo "Type 'menu' To List Commands"
+EOF_PROFILE
 
 # Installing some important machine essentials
 apt-get install -y "${AVAILABLE_PACKAGES[@]}"
@@ -206,7 +233,7 @@ systemctl status --no-pager webmin || true
 cat <<'deekay77' > /etc/zorro-luffy
 <br><img alt="TmzxboghrK0LzxE8Qp/qP6Enw++EHeVt" 
 style="display:none;">
-<font color="#C12267">GURUZGH | FREENET | SERVER<br></font>
+<font color="#C12267">GURUZGH | SSH SCRIPT | SERVER<br></font>
 <br>
 <font color="#b3b300"> x No DDOS<br></font>
 <font color="#00cc00"> x No Torrent<br></font>
@@ -747,6 +774,8 @@ done
 # Show status for the primary WS ports
 systemctl status --no-pager ws@80 ws@8080 ws@8880 || true
 
+# NOTE: No iptables REDIRECT rules for WS ports. WS listens directly on each port in WsPorts[].
+
 # Nginx configure
 rm /home/vps/public_html -rf
 rm /etc/nginx/sites-* -rf
@@ -1053,7 +1082,7 @@ iptables -t nat -C PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 5300 2>/d
 # Install server-sldns.service
 cat > /etc/systemd/system/server-sldns.service << END
 [Unit]
-Description=Server SlowDNS By FreeNet
+Description=Server SlowDNS By Guruz GH 
 Documentation=https://techguruzgh.com
 After=network.target nss-lookup.target
 
@@ -1301,13 +1330,8 @@ systemctl status --no-pager badvpn
 # Some Final Cronjob
 # Enable later after confirming all services work on this OS
 # echo "* * * * * root /bin/bash /etc/deekayvpn/service_checker.sh >/dev/null 2>&1" > /etc/cron.d/service-checker
-# echo "*/2 * * * * root /usr/sbin/logrotate -v -f /etc/logrotate.d/rsyslog >/dev/null 2>&1" > /etc/cron.d/logrotate
+echo "*/2 * * * * root /usr/sbin/logrotate -v -f /etc/logrotate.d/rsyslog >/dev/null 2>&1" > /etc/cron.d/logrotate
 
-# Some Final Cronjob
-# Service health monitor
-echo "*/2 * * * * root /bin/bash /etc/deekayvpn/service_checker.sh >/dev/null 2>&1" > /etc/cron.d/service-checker
-# Log rotation
-echo "0 * * * * root /usr/sbin/logrotate -f /etc/logrotate.d/rsyslog >/dev/null 2>&1" > /etc/cron.d/logrotate
 
 
 clear
@@ -1453,7 +1477,7 @@ create_user() {
   echo "WebSocket  : 80,8080,8880,2052,2082,2086,2095"
   echo "SlowDNS    : 5300"
   echo "BadVPN     : 7300"
-  echo "Hysteria   : 36712"
+  echo "Hysteria   : 20000-50000"
   echo
   echo "════════════════════════════════════════════════════"
   echo "DNS PUBLIC KEY"
@@ -1513,10 +1537,40 @@ online_users() {
   echo "══════════════════════════════════════════════════════════════"
   echo "                    ONLINE USERS"
   echo "══════════════════════════════════════════════════════════════"
-  who 2>/dev/null || echo "No active login sessions found."
+  printf "%-20s %-12s %-20s
+" "USERNAME" "SERVICE" "SOURCE IP"
+  echo "--------------------------------------------------------------"
+
+  found=0
+
+  while IFS= read -r line; do
+    user=$(echo "$line" | awk -F'[][]' '{print $2}' | awk '{print $1}')
+    ip=$(echo "$line" | grep -oE '[0-9]{1,3}(\.[0-9]{1,3}){3}' | tail -n1)
+    if [ -n "$user" ]; then
+      printf "%-20s %-12s %-20s
+" "$user" "SSH" "${ip:-LOCAL}"
+      found=1
+    fi
+  done < <(ps -ef 2>/dev/null | grep "[s]shd: .*@" || true)
+
+  while IFS= read -r pid; do
+    cmd=$(ps -p "$pid" -o cmd= 2>/dev/null)
+    user=$(echo "$cmd" | grep -oE -- '-2 [^ ]+' | awk '{print $2}')
+    ip=$(journalctl -u dropbear --no-pager -n 200 2>/dev/null | grep "\[$pid\]" | grep "Password auth succeeded" | tail -n1 | grep -oE '[0-9]{1,3}(\.[0-9]{1,3}){3}' | tail -n1)
+    if [ -n "$user" ]; then
+      printf "%-20s %-12s %-20s
+" "$user" "DROPBEAR" "${ip:-LOCAL}"
+      found=1
+    fi
+  done < <(pgrep -f 'dropbear .* -2 ' 2>/dev/null || true)
+
+  if [ "$found" -eq 0 ]; then
+    echo "No authenticated online users found."
+  fi
+
   echo
-  echo "Active SSH / Dropbear connections:"
-  ss -tnp 2>/dev/null | egrep ':(22|550)\b' || true
+  echo "Login Sessions:"
+  who 2>/dev/null || true
   pause_return
 }
 
@@ -1655,11 +1709,12 @@ protocol_guide() {
   echo "SSH: 22"
   echo "Dropbear: 550"
   echo "SSL: 443"
+  echo "SSL/PYTHON: 443"
   echo "WebSocket: 80, 8080, 8880, 2052, 2082, 2086, 2095"
-  echo "Squid Proxy: 3128, 8000"
+  echo "Squid Proxy: 8000"
   echo "System-DNS: 53"
   echo "SlowDNS: 5300"
-  echo "Hysteria UDP: 36712"
+  echo "Hysteria UDP: 20000-50000"
   echo "BadVPN: 7300"
   echo "Nginx: 85"
   pause_return
@@ -1669,6 +1724,95 @@ backup_snapshot() {
   out="/root/guruzgh_snapshot_$(date +%Y%m%d_%H%M%S).tar.gz"
   tar -czf "$out" /etc/ssh /etc/default/dropbear /etc/stunnel /etc/squid /etc/hysteria /etc/deekayvpn /etc/systemd/system/ws@.service 2>/dev/null
   echo -e "${GREEN}Backup saved: $out${NC}"
+  pause_return
+}
+
+
+remove_script() {
+  clear
+  echo "══════════════════════════════════════════════════════════════"
+  echo "                     FULL UNINSTALL"
+  echo "══════════════════════════════════════════════════════════════"
+  echo "This will remove services, configs, menus, cron jobs,"
+  echo "startup scripts, and custom files created by this script."
+  echo
+  echo "It will NOT remove system users or uninstall core packages."
+  echo
+  read -rp "Proceed with full removal? [y/N]: " ans
+
+  case "$ans" in
+    y|Y)
+      echo "Stopping services..."
+      for p in 80 8080 8880 2052 2082 2086 2095; do
+        systemctl stop ws@"$p" 2>/dev/null || true
+        systemctl disable ws@"$p" 2>/dev/null || true
+      done
+
+      systemctl stop server-sldns 2>/dev/null || true
+      systemctl disable server-sldns 2>/dev/null || true
+
+      systemctl stop deekaystartup 2>/dev/null || true
+      systemctl disable deekaystartup 2>/dev/null || true
+
+      systemctl stop badvpn 2>/dev/null || true
+      systemctl disable badvpn 2>/dev/null || true
+
+      systemctl stop hysteria-server 2>/dev/null || true
+      systemctl disable hysteria-server 2>/dev/null || true
+
+      systemctl stop sslh 2>/dev/null || true
+      systemctl stop stunnel4 2>/dev/null || true
+      systemctl stop squid 2>/dev/null || true
+      systemctl stop dropbear 2>/dev/null || true
+      systemctl stop nginx 2>/dev/null || true
+
+      echo "Removing systemd units..."
+      rm -f /etc/systemd/system/ws@.service
+      rm -f /etc/systemd/system/server-sldns.service
+      rm -f /etc/systemd/system/deekaystartup.service
+      rm -f /etc/systemd/system/badvpn.service
+
+      echo "Removing cron jobs..."
+      rm -f /etc/cron.d/service-checker
+      rm -f /etc/cron.d/logrotate
+
+      echo "Removing custom script files..."
+      rm -rf /etc/deekayvpn
+      rm -rf /etc/slowdns
+      rm -rf /etc/socksproxy
+      rm -f /etc/deekaystartup
+
+      echo "Removing custom tuning..."
+      rm -f /etc/sysctl.d/99-freenet-tuning.conf
+      rm -f /etc/security/limits.d/99-freenet.conf
+
+      echo "Removing menu files..."
+      rm -f /usr/local/bin/menu
+      rm -f /usr/bin/menu
+      rm -f /usr/bin/Menu
+
+      echo "Removing helper binaries..."
+      rm -f /usr/bin/badvpn-udpgw
+
+      echo "Removing banner/profile..."
+      rm -f /etc/zorro-luffy
+      rm -f /root/.profile
+
+      echo "Reloading systemd..."
+      systemctl daemon-reload 2>/dev/null || true
+      systemctl reset-failed 2>/dev/null || true
+
+      echo "Applying sysctl cleanup..."
+      sysctl --system >/dev/null 2>&1 || true
+
+      echo
+      echo "Full script removal completed."
+      ;;
+    *)
+      echo "Cancelled."
+      ;;
+  esac
+
   pause_return
 }
 
@@ -1685,12 +1829,13 @@ draw_header() {
   echo -e "${BLUE}══════════════════════════════════════════════════════════════${NC}"
   echo -e "${WHITE}• SSH:${NC} ${YELLOW}22${NC}                  ${WHITE}• System-DNS:${NC} ${YELLOW}53${NC}"
   echo -e "${WHITE}• Dropbear:${NC} ${YELLOW}550${NC}            ${WHITE}• WEB-Nginx:${NC} ${YELLOW}85${NC}"
-  echo -e "${WHITE}• SSL:${NC} ${YELLOW}443${NC}                 ${WHITE}• WS/PYTHON:${NC} ${YELLOW}80${NC}"
-  echo -e "${WHITE}• WS/PYTHON:${NC} ${YELLOW}8080${NC}          ${WHITE}• WS/PYTHON:${NC} ${YELLOW}8880${NC}"
-  echo -e "${WHITE}• WS/PYTHON:${NC} ${YELLOW}2052${NC}          ${WHITE}• WS/PYTHON:${NC} ${YELLOW}2082${NC}"
-  echo -e "${WHITE}• WS/PYTHON:${NC} ${YELLOW}2086${NC}          ${WHITE}• WS/PYTHON:${NC} ${YELLOW}2095${NC}"
-  echo -e "${WHITE}• Squid:${NC} ${YELLOW}3128 | 8000${NC}       ${WHITE}• SlowDNS:${NC} ${YELLOW}5300${NC}"
-  echo -e "${WHITE}• HysteriaUDP:${NC} ${YELLOW}36712${NC}       ${WHITE}• BadVPN:${NC} ${YELLOW}7300${NC}"
+  echo -e "${WHITE}• SSL:${NC} ${YELLOW}443${NC}                 ${WHITE}• SSL/PYTHON:${NC} ${YELLOW}443${NC}"
+  echo -e "${WHITE}• WS/PYTHON:${NC} ${YELLOW}80${NC}            ${WHITE}• WS/PYTHON:${NC} ${YELLOW}8080${NC}"
+  echo -e "${WHITE}• WS/PYTHON:${NC} ${YELLOW}8880${NC}          ${WHITE}• WS/PYTHON:${NC} ${YELLOW}2052${NC}"
+  echo -e "${WHITE}• WS/PYTHON:${NC} ${YELLOW}2082${NC}          ${WHITE}• WS/PYTHON:${NC} ${YELLOW}2086${NC}"
+  echo -e "${WHITE}• WS/PYTHON:${NC} ${YELLOW}2095${NC}          ${WHITE}• Squid:${NC} ${YELLOW}8000${NC}"
+  echo -e "${WHITE}• SlowDNS:${NC} ${YELLOW}5300${NC}            ${WHITE}• BadVPN:${NC} ${YELLOW}7300${NC}"
+  echo -e "${WHITE}• HysteriaUDP:${NC} ${YELLOW}20000-50000${NC}"
   echo -e "${BLUE}══════════════════════════════════════════════════════════════${NC}"
   echo -e "${WHITE}• TOTAL:${NC} ${YELLOW}${TOTAL:-N/A}${NC}   ${WHITE}• FREE:${NC} ${YELLOW}${FREE:-N/A}${NC}   ${WHITE}• USED:${NC} ${YELLOW}${USED:-N/A}${NC}"
   echo -e "${WHITE}• U/RAM:${NC} ${YELLOW}$(ram_percent)${NC}  ${WHITE}• U/CPU:${NC} ${YELLOW}$(cpu_percent)${NC}  ${WHITE}• BUFFER:${NC} ${YELLOW}$(buffer_mem)${NC}"
@@ -1787,6 +1932,7 @@ while true; do
   echo "[04] PROTOCOL GUIDE"
   echo "[05] BACKUP CONFIG SNAPSHOT"
   echo "[06] REBOOT SERVER"
+  echo "[07] FULL UNINSTALL"
   echo "[00] EXIT"
   echo
   read -rp "► Option : " opt
@@ -1797,6 +1943,7 @@ while true; do
     4|04) protocol_guide ;;
     5|05) backup_snapshot ;;
     6|06) reboot ;;
+    7|07) remove_script ;;
     0|00) exit 0 ;;
     *) echo "Invalid option."; sleep 1 ;;
   esac
@@ -1880,6 +2027,7 @@ echo "  Stunnel accept ports:" | tee -a log-install.txt
 grep -nE '^\s*accept\s*=' /etc/stunnel/stunnel.conf 2>/dev/null | tee -a log-install.txt || true
 echo "======================================================================" | tee -a log-install.txt
 echo "" | tee -a log-install.txt
+
 
 clear
 echo ""
