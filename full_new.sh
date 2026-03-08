@@ -755,12 +755,12 @@ Environment=PYTHONUNBUFFERED=1
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 NoNewPrivileges=true
-#LimitNOFILE=1048576
-#TasksMax=infinity
+LimitNOFILE=1048576
+TasksMax=infinity
 Restart=on-failure
-# RestartSec=5
-# StartLimitIntervalSec=60
-# StartLimitBurst=3
+RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=3
 ExecStartPre=/usr/bin/python3 -m py_compile /etc/socksproxy/proxy.py
 ExecStart=/usr/bin/python3 -O /etc/socksproxy/proxy.py -b 0.0.0.0 -p %i
 StandardOutput=journal
@@ -1291,8 +1291,8 @@ ln -fs /usr/share/zoneinfo/MyTimeZone /etc/localtime
 export DEBIAN_FRONTEND=noninteractive
 
 # Allowing SlowDNS to Forward traffic
-iptables -I INPUT -p udp --dport 5300 -j ACCEPT
-iptables -t nat -I PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 5300
+iptables -C INPUT -p udp --dport 5300 -j ACCEPT 2>/dev/null || iptables -I INPUT -p udp --dport 5300 -j ACCEPT
+iptables -t nat -C PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 5300 2>/dev/null || iptables -t nat -I PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 5300
 
 # WS ports are handled by systemd instances ws@PORT (no iptables redirects)
 
@@ -1371,12 +1371,8 @@ systemctl start badvpn
 systemctl status --no-pager badvpn
 
 # Some Final Cronjob
-echo "* * * * * root /bin/bash /etc/deekayvpn/service_checker.sh >/dev/null 2>&1" > /etc/cron.d/service-checker
+echo "*/3 * * * * root /bin/bash /etc/deekayvpn/service_checker.sh >/dev/null 2>&1" > /etc/cron.d/service-checker
 echo "*/2 * * * * root /usr/sbin/logrotate -v -f /etc/logrotate.d/rsyslog >/dev/null 2>&1" > /etc/cron.d/logrotate
-
-# Some Final Cronjob
-#echo "*/3 * * * * root /bin/bash /etc/deekayvpn/service_checker.sh >/dev/null 2>&1" > /etc/cron.d/service-checker
-#echo "*/2 * * * * root /usr/sbin/logrotate -v -f /etc/logrotate.d/rsyslog >/dev/null 2>&1" > /etc/cron.d/logrotate
 
 clear
 cd
