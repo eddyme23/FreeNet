@@ -454,8 +454,8 @@ LISTENING_PORT = $WsPort
 PASS = ''
 
 # CONST
-BUFLEN = 4096 * 4
-TIMEOUT = 60
+BUFLEN = 16384
+TIMEOUT = 300
 DEFAULT_HOST = '127.0.0.1:$Dropbear_Port1'
 RESPONSE = b'$WsResponse'
 
@@ -474,16 +474,18 @@ class Server(threading.Thread):
     def run(self):
         self.soc = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.soc.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.soc.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         self.soc.settimeout(2)
         self.soc.bind((self.host, self.port))
-        self.soc.listen(4096)
+        self.soc.listen(8192)
         self.running = True
 
         try:
             while self.running:
                 try:
                     c, addr = self.soc.accept()
-                    c.setblocking(True)
+                    c.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                    c.settimeout(10)
                 except socket.timeout:
                     continue
                 except OSError:
@@ -541,7 +543,10 @@ class ConnectionHandler(threading.Thread):
     def close(self):
         try:
             if not self.client_closed:
-                self.client.shutdown(socket.SHUT_RDWR)
+                try:
+                    self.client.shutdown(socket.SHUT_RDWR)
+                except Exception:
+                    pass
                 self.client.close()
         except Exception:
             pass
@@ -550,7 +555,10 @@ class ConnectionHandler(threading.Thread):
 
         try:
             if not self.target_closed and self.target:
-                self.target.shutdown(socket.SHUT_RDWR)
+                try:
+                    self.target.shutdown(socket.SHUT_RDWR)
+                except Exception:
+                    pass
                 self.target.close()
         except Exception:
             pass
@@ -567,7 +575,10 @@ class ConnectionHandler(threading.Thread):
 
             split = self.find_header(self.client_buffer, 'X-Split')
             if split != '':
-                self.client.recv(BUFLEN)
+                try:
+                    self.client.recv(BUFLEN)
+                except Exception:
+                    pass
 
             if host_port != '':
                 passwd = self.find_header(self.client_buffer, 'X-Pass')
@@ -598,17 +609,16 @@ class ConnectionHandler(threading.Thread):
             return ''
 
         marker = header + ': '
-        aux = text.find(marker)
-        if aux == -1:
+        pos = text.find(marker)
+        if pos == -1:
             return ''
 
-        aux = text.find(':', aux)
-        text = text[aux + 2:]
-        aux = text.find('\r\n')
-        if aux == -1:
+        value_start = pos + len(marker)
+        value_end = text.find('\r\n', value_start)
+        if value_end == -1:
             return ''
 
-        return text[:aux]
+        return text[value_start:value_end].strip()
 
     def connect_target(self, host):
         i = host.find(':')
@@ -622,8 +632,11 @@ class ConnectionHandler(threading.Thread):
         soc_family, soc_type, proto, _, address = info[0]
 
         self.target = socket.socket(soc_family, soc_type, proto)
-        self.target_closed = False
+        self.target.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        self.target.settimeout(10)
         self.target.connect(address)
+        self.target.settimeout(None)
+        self.target_closed = False
 
     def method_connect(self, path):
         self.log += ' - CONNECT {}'.format(path)
@@ -635,40 +648,37 @@ class ConnectionHandler(threading.Thread):
 
     def do_connect(self):
         socs = [self.client, self.target]
-        count = 0
-        error = False
+        idle = 0
 
         while True:
-            count += 1
-            recv, _, err = select.select(socs, [], socs, 3)
+            try:
+                recv, _, err = select.select(socs, [], socs, 5)
+            except Exception:
+                break
 
             if err:
-                error = True
-
-            if recv:
-                for in_sock in recv:
-                    try:
-                        data = in_sock.recv(BUFLEN)
-                        if data:
-                            if in_sock is self.target:
-                                self.client.sendall(data)
-                            else:
-                                while data:
-                                    sent = self.target.send(data)
-                                    data = data[sent:]
-                            count = 0
-                        else:
-                            error = True
-                            break
-                    except Exception:
-                        error = True
-                        break
-
-            if count >= TIMEOUT:
-                error = True
-
-            if error:
                 break
+
+            if not recv:
+                idle += 5
+                if idle >= TIMEOUT:
+                    break
+                continue
+
+            idle = 0
+
+            for in_sock in recv:
+                try:
+                    data = in_sock.recv(BUFLEN)
+                    if not data:
+                        return
+
+                    if in_sock is self.target:
+                        self.client.sendall(data)
+                    else:
+                        self.target.sendall(data)
+                except Exception:
+                    return
 
 
 def print_usage():
@@ -727,7 +737,6 @@ if __name__ == '__main__':
     parse_args(sys.argv[1:])
     main()
 EOF
-
 chmod +x $loc/proxy.py
 
 # Creating a template service so we can run WS on multiple ports
@@ -746,12 +755,12 @@ Environment=PYTHONUNBUFFERED=1
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 NoNewPrivileges=true
-LimitNOFILE=1048576
-TasksMax=infinity
+#LimitNOFILE=1048576
+#TasksMax=infinity
 Restart=on-failure
-RestartSec=5
-StartLimitIntervalSec=60
-StartLimitBurst=3
+# RestartSec=5
+# StartLimitIntervalSec=60
+# StartLimitBurst=3
 ExecStartPre=/usr/bin/python3 -m py_compile /etc/socksproxy/proxy.py
 ExecStart=/usr/bin/python3 -O /etc/socksproxy/proxy.py -b 0.0.0.0 -p %i
 StandardOutput=journal
@@ -862,7 +871,6 @@ access_log none
 cache_log /dev/null
 logfile_rotate 0
 max_filedescriptors 65535
-pipeline_prefetch on
 http_access allow server
 http_access allow checker
 http_access deny all
@@ -998,7 +1006,7 @@ else
 fi
 
 # websocket: check each port independently and restart only the failed unit
-for port in "${WsPorts[@]}"; do
+for port in 80 8080 8880 2052 2082 2086 2095; do
     unit="ws@${port}"
     name="ws_${port}"
 
@@ -1363,8 +1371,12 @@ systemctl start badvpn
 systemctl status --no-pager badvpn
 
 # Some Final Cronjob
-echo "*/3 * * * * root /bin/bash /etc/deekayvpn/service_checker.sh >/dev/null 2>&1" > /etc/cron.d/service-checker
+echo "* * * * * root /bin/bash /etc/deekayvpn/service_checker.sh >/dev/null 2>&1" > /etc/cron.d/service-checker
 echo "*/2 * * * * root /usr/sbin/logrotate -v -f /etc/logrotate.d/rsyslog >/dev/null 2>&1" > /etc/cron.d/logrotate
+
+# Some Final Cronjob
+#echo "*/3 * * * * root /bin/bash /etc/deekayvpn/service_checker.sh >/dev/null 2>&1" > /etc/cron.d/service-checker
+#echo "*/2 * * * * root /usr/sbin/logrotate -v -f /etc/logrotate.d/rsyslog >/dev/null 2>&1" > /etc/cron.d/logrotate
 
 clear
 cd
