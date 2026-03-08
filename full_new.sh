@@ -258,10 +258,10 @@ apt -y --purge remove apache2 ufw firewalld
 systemctl stop nginx
 
 # Download and install webmin
-wget https://github.com/webmin/webmin/releases/download/2.111/webmin_2.111_all.deb
-dpkg --install webmin_2.111_all.deb || apt-get install -f -y
+wget https://github.com/webmin/webmin/releases/latest/download/webmin-current.deb
+dpkg --install webmin-current.deb || apt-get install -f -y
 sleep 1
-rm -rf webmin_2.111_all.deb
+rm -f webmin-current.deb
 
 # Use HTTP instead of HTTPS
 sed -i 's|ssl=1|ssl=0|g' /etc/webmin/miniserv.conf
@@ -1050,8 +1050,9 @@ else
     restart_after_3_fails ssh ssh "SSHPORT1,SSHPORT2"
 fi
 
+# sync WS checker ports from WsPorts array
 # websocket: check each port independently and restart only the failed unit
-for port in 80 8080 8880 2052 2082 2086 2095; do
+for port in WS_PORT_LIST; do
     unit="ws@${port}"
     name="ws_${port}"
 
@@ -1064,6 +1065,8 @@ done
 ServiceChecker
 
 chmod 755 /etc/deekayvpn/service_checker.sh
+WS_PORT_LIST="${WsPorts[*]}"
+sed -i "s|WS_PORT_LIST|$WS_PORT_LIST|g" /etc/deekayvpn/service_checker.sh
 sed -i "s|MYCHATID|$My_Chat_ID|g" /etc/deekayvpn/service_checker.sh
 sed -i "s|MYBOTID|$My_Bot_Key|g" /etc/deekayvpn/service_checker.sh
 sed -i "s|IPADDRESS|$IPADDR|g" /etc/deekayvpn/service_checker.sh
@@ -1362,7 +1365,7 @@ deekayz
 sed -i "s|MyTimeZone|$MyVPS_Time|g" /etc/deekaystartup
 sed -i "s|DNS1|$Dns_1|g" /etc/deekaystartup
 sed -i "s|DNS2|$Dns_2|g" /etc/deekaystartup
-rm -rf /etc/sysctl.d/99*
+#rm -rf /etc/sysctl.d/99*
 
  # Setting our startup script to run every machine boots 
 cat <<'deekayx' > /etc/systemd/system/deekaystartup.service
