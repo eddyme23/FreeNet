@@ -113,7 +113,7 @@ if [ "$ID" = "debian" ] && [ "$VERSION_ID" = "13" ]; then
   echo ""
   echo "Debian 13 detected."
   echo "This OS is not fully supported yet."
-  echo "Please install Debian 12 or Ubuntu 22/24."
+  echo "Please install on Debian 12 or Ubuntu 22/24."
   echo ""
   exit 1
 fi
@@ -147,11 +147,6 @@ ssh-keygen -A >/dev/null 2>&1 || true
 
 # Ensure resolver file exists
 touch /etc/resolv.conf
-
-if [ "${ID}" != "ubuntu" ] && [ "${ID}" != "debian" ]; then
-  echo "This installer supports Debian and Ubuntu only. Detected: ${ID}"
-  exit 1
-fi
 
 PACKAGE_LIST=(
   neofetch sslh dnsutils stunnel4 squid dropbear nano sudo wget unzip tar gzip
@@ -741,6 +736,7 @@ cat <<'service' > /etc/systemd/system/ws@.service
 Description=Websocket Python3 (port %i)
 Documentation=https://google.com
 After=network.target nss-lookup.target
+Wants=network-online.target
 
 [Service]
 Type=simple
@@ -753,7 +749,9 @@ NoNewPrivileges=true
 LimitNOFILE=1048576
 TasksMax=infinity
 Restart=on-failure
-RestartSec=2
+RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=3
 ExecStartPre=/usr/bin/python3 -m py_compile /etc/socksproxy/proxy.py
 ExecStart=/usr/bin/python3 -O /etc/socksproxy/proxy.py -b 0.0.0.0 -p %i
 StandardOutput=journal
@@ -773,8 +771,6 @@ done
 
 # Show status for the primary WS ports
 systemctl status --no-pager ws@80 ws@8080 ws@8880 || true
-
-# NOTE: No iptables REDIRECT rules for WS ports. WS listens directly on each port in WsPorts[].
 
 # Nginx configure
 rm /home/vps/public_html -rf
@@ -866,6 +862,7 @@ access_log none
 cache_log /dev/null
 logfile_rotate 0
 max_filedescriptors 65535
+pipeline_prefetch on
 http_access allow server
 http_access allow checker
 http_access deny all
@@ -910,84 +907,122 @@ URL="https://api.telegram.org/bot${KEY}/sendMessage"
 
 send_telegram_message() {
     local TEXT="$1"
-    curl -s --max-time 10 --retry 5 --retry-delay 2 --retry-max-time 10  -d "chat_id=${MYID}&text=${TEXT}&disable_web_page_preview=true&parse_mode=markdown" ${URL}
+    curl -s --max-time 10 --retry 5 --retry-delay 2 --retry-max-time 10 \
+      -d "chat_id=${MYID}&text=${TEXT}&disable_web_page_preview=true&parse_mode=markdown" \
+      "${URL}" >/dev/null 2>&1
 }
 
 server_ip="IPADDRESS"
 datenow=$(date +"%Y-%m-%d %T")
 IPCOUNTRY=$(curl -s "https://freeipapi.com/api/json/${server_ip}" | jq -r '.countryName')
 
-declare -A service_ports=(
-    ["dropbear"]="DROPBEARPORT1,DROPBEARPORT2"
-    ["stunnel4"]="STUNNELPORT"
-    ["sslh"]="SSLHPORT"
-    ["ws"]="WSPORTS"
-    ["squid"]="SQUIDPORT1,SQUIDPORT2"
-    ["nginx"]="NGINXPORT"
-    ["sshd"]="SSHPORT1,SSHPORT2"
-)
+STATE_DIR="/etc/deekayvpn/health"
+mkdir -p "$STATE_DIR"
 
-declare -A service_commands=(
-    ["dropbear"]="sudo systemctl --force --force restart dropbear"
-    ["stunnel4"]="sudo systemctl --force --force restart stunnel4"
-    ["sslh"]="sudo systemctl --force --force restart sslh"
-    ["ws"]="sudo systemctl --force --force restart WS_UNITS"
-    ["squid"]="sudo systemctl --force --force restart squid"
-    ["nginx"]="sudo systemctl --force --force restart nginx"
-    ["sshd"]="sudo systemctl --force --force restart ssh"
-)
+check_port() {
+    local port="$1"
+    ss -lnt | awk '{print $4}' | grep -q ":${port}$"
+}
 
-for service in "${!service_ports[@]}"; do
-    ports="${service_ports[$service]}"
-    all_ports_ok=true
+mark_fail() {
+    local name="$1"
+    local f="$STATE_DIR/${name}.fail"
+    local n=0
+    [ -f "$f" ] && n=$(cat "$f")
+    n=$((n+1))
+    echo "$n" > "$f"
+    echo "$n"
+}
 
-    # Special handling for WS (systemd template instances)
-    if [ "$service" = "ws" ]; then
-        for unit in WS_UNITS; do
-            if ! systemctl is-active --quiet "$unit"; then
-                all_ports_ok=false
-                break
-            fi
-        done
-        proc_ok=true
-    else
-        for port in ${ports//,/ }; do
-            if ! netstat -ntlp | awk '{print $4}' | grep -q ":$port$"; then
-                all_ports_ok=false
-                break
-            fi
-        done
-        proc_ok=false
-        pgrep "$service" >/dev/null 2>&1 && proc_ok=true
-    fi
+clear_fail() {
+    local name="$1"
+    rm -f "$STATE_DIR/${name}.fail"
+}
 
-    if [ "$proc_ok" = false ] || [ "$all_ports_ok" = false ]; then
-        echo "$service is not functioning correctly (missing ports or process). Restarting..."
-        eval "${service_commands[$service]}" >/dev/null 2>&1
-        TEXT="Service *$service* was offline or missing port(s) *$ports* on server *${IPCOUNTRY}* ($server_ip). It has been restarted successfully at *${datenow}*."
+restart_after_3_fails() {
+    local name="$1"
+    local unit="$2"
+    local ports="$3"
+
+    local fails
+    fails=$(mark_fail "$name")
+
+    if [ "$fails" -ge 3 ]; then
+        systemctl restart "$unit" >/dev/null 2>&1
+        TEXT="Service *$unit* was offline or missing port(s) *$ports* on server *${IPCOUNTRY}* ($server_ip). It has been restarted at *${datenow}*."
         send_telegram_message "$TEXT"
+        clear_fail "$name"
+    fi
+}
+
+# dropbear
+if check_port DROPBEARPORT1 && check_port DROPBEARPORT2 && systemctl is-active --quiet dropbear; then
+    clear_fail dropbear
+else
+    restart_after_3_fails dropbear dropbear "DROPBEARPORT1,DROPBEARPORT2"
+fi
+
+# stunnel
+if check_port STUNNELPORT && systemctl is-active --quiet stunnel4; then
+    clear_fail stunnel4
+else
+    restart_after_3_fails stunnel4 stunnel4 "STUNNELPORT"
+fi
+
+# sslh
+if check_port SSLHPORT && systemctl is-active --quiet sslh; then
+    clear_fail sslh
+else
+    restart_after_3_fails sslh sslh "SSLHPORT"
+fi
+
+# squid
+if check_port SQUIDPORT1 && check_port SQUIDPORT2 && systemctl is-active --quiet squid; then
+    clear_fail squid
+else
+    restart_after_3_fails squid squid "SQUIDPORT1,SQUIDPORT2"
+fi
+
+# nginx
+if check_port NGINXPORT && systemctl is-active --quiet nginx; then
+    clear_fail nginx
+else
+    restart_after_3_fails nginx nginx "NGINXPORT"
+fi
+
+# ssh
+if check_port SSHPORT1 && check_port SSHPORT2 && systemctl is-active --quiet ssh; then
+    clear_fail ssh
+else
+    restart_after_3_fails ssh ssh "SSHPORT1,SSHPORT2"
+fi
+
+# websocket: check each port independently and restart only the failed unit
+for port in "${WsPorts[@]}"; do
+    unit="ws@${port}"
+    name="ws_${port}"
+
+    if check_port "$port" && systemctl is-active --quiet "$unit"; then
+        clear_fail "$name"
     else
-        echo "$service is running and all required ports are bound: $ports."
+        restart_after_3_fails "$name" "$unit" "$port"
     fi
 done
 ServiceChecker
 
-chmod -R 777 /etc/deekayvpn/service_checker.sh
-sed -i "s|MYCHATID|$My_Chat_ID|g" "/etc/deekayvpn/service_checker.sh"
-sed -i "s|MYCHANNELID|$My_Channel_ID|g" "/etc/deekayvpn/service_checker.sh"
-sed -i "s|MYBOTID|$My_Bot_Key|g" "/etc/deekayvpn/service_checker.sh"
-sed -i "s|IPADDRESS|$IPADDR|g" "/etc/deekayvpn/service_checker.sh"
-sed -i "s|DROPBEARPORT1|$Dropbear_Port1|g" "/etc/deekayvpn/service_checker.sh"
-sed -i "s\|DROPBEARPORT2\|\$Dropbear_Port2\|g" "/etc/deekayvpn/service_checker\.sh"
-sed -i "s|WSPORTS|80,8080,8880,2052,2082,2086,2095|g" "/etc/deekayvpn/service_checker.sh"
-sed -i "s|WS_UNITS|ws@80 ws@8080 ws@8880 ws@2052 ws@2082 ws@2086 ws@2095|g" "/etc/deekayvpn/service_checker.sh"
-sed -i "s|STUNNELPORT|$Stunnel_Port|g" "/etc/deekayvpn/service_checker.sh"
-sed -i "s|SSLHPORT|$MainPort|g" "/etc/deekayvpn/service_checker.sh"
-sed -i "s|SQUIDPORT1|$Squid_Port1|g" "/etc/deekayvpn/service_checker.sh"
-sed -i "s|SQUIDPORT2|$Squid_Port2|g" "/etc/deekayvpn/service_checker.sh"
-sed -i "s|NGINXPORT|$Nginx_Port|g" "/etc/deekayvpn/service_checker.sh"
-sed -i "s|SSHPORT1|$SSH_Port1|g" "/etc/deekayvpn/service_checker.sh"
-sed -i "s|SSHPORT2|$SSH_Port2|g" "/etc/deekayvpn/service_checker.sh"
+chmod 755 /etc/deekayvpn/service_checker.sh
+sed -i "s|MYCHATID|$My_Chat_ID|g" /etc/deekayvpn/service_checker.sh
+sed -i "s|MYBOTID|$My_Bot_Key|g" /etc/deekayvpn/service_checker.sh
+sed -i "s|IPADDRESS|$IPADDR|g" /etc/deekayvpn/service_checker.sh
+sed -i "s|DROPBEARPORT1|$Dropbear_Port1|g" /etc/deekayvpn/service_checker.sh
+sed -i "s|DROPBEARPORT2|$Dropbear_Port2|g" /etc/deekayvpn/service_checker.sh
+sed -i "s|STUNNELPORT|$Stunnel_Port|g" /etc/deekayvpn/service_checker.sh
+sed -i "s|SSLHPORT|$MainPort|g" /etc/deekayvpn/service_checker.sh
+sed -i "s|SQUIDPORT1|$Squid_Port1|g" /etc/deekayvpn/service_checker.sh
+sed -i "s|SQUIDPORT2|$Squid_Port2|g" /etc/deekayvpn/service_checker.sh
+sed -i "s|NGINXPORT|$Nginx_Port|g" /etc/deekayvpn/service_checker.sh
+sed -i "s|SSHPORT1|$SSH_Port1|g" /etc/deekayvpn/service_checker.sh
+sed -i "s|SSHPORT2|$SSH_Port2|g" /etc/deekayvpn/service_checker.sh
 
 # Webmin Configuration
 sed -i '$ i\deekay: acl adsl-client ajaxterm apache at backup-config bacula-backup bandwidth bind8 burner change-user cluster-copy cluster-cron cluster-passwd cluster-shell cluster-software cluster-useradmin cluster-usermin cluster-webmin cpan cron custom dfsadmin dhcpd dovecot exim exports fail2ban fdisk fetchmail file filemin filter firewall firewalld fsdump grub heartbeat htaccess-htpasswd idmapd inetd init inittab ipfilter ipfw ipsec iscsi-client iscsi-server iscsi-target iscsi-tgtd jabber krb5 ldap-client ldap-server ldap-useradmin logrotate lpadmin lvm mailboxes mailcap man mon mount mysql net nis openslp package-updates pam pap passwd phpini postfix postgresql ppp-client pptp-client pptp-server proc procmail proftpd qmailadmin quota raid samba sarg sendmail servers shell shorewall shorewall6 smart-status smf software spam squid sshd status stunnel syslog-ng syslog system-status tcpwrappers telnet time tunnel updown useradmin usermin vgetty webalizer webmin webmincron webminlog wuftpd xinetd' /etc/webmin/webmin.acl
@@ -1075,7 +1110,7 @@ chmod +x /etc/slowdns/server.key
 chmod +x /etc/slowdns/server.pub
 chmod +x /etc/slowdns/sldns-server
 
-# Iptables Rule for SlowDNS server
+# Iptables Rule for SlowDNS server new implementation
 iptables -C INPUT -p udp --dport 5300 -j ACCEPT 2>/dev/null || iptables -I INPUT -p udp --dport 5300 -j ACCEPT
 iptables -t nat -C PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 5300 2>/dev/null || iptables -t nat -I PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 5300
 
@@ -1328,11 +1363,8 @@ systemctl start badvpn
 systemctl status --no-pager badvpn
 
 # Some Final Cronjob
-# Enable later after confirming all services work on this OS
-# echo "* * * * * root /bin/bash /etc/deekayvpn/service_checker.sh >/dev/null 2>&1" > /etc/cron.d/service-checker
+echo "*/3 * * * * root /bin/bash /etc/deekayvpn/service_checker.sh >/dev/null 2>&1" > /etc/cron.d/service-checker
 echo "*/2 * * * * root /usr/sbin/logrotate -v -f /etc/logrotate.d/rsyslog >/dev/null 2>&1" > /etc/cron.d/logrotate
-
-
 
 clear
 cd
