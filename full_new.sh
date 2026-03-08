@@ -258,10 +258,10 @@ apt -y --purge remove apache2 ufw firewalld
 systemctl stop nginx
 
 # Download and install webmin
-wget https://github.com/webmin/webmin/releases/latest/download/webmin-current.deb
-dpkg --install webmin-current.deb || apt-get install -f -y
+wget https://github.com/webmin/webmin/releases/download/2.111/webmin_2.111_all.deb
+dpkg --install webmin_2.111_all.deb || apt-get install -f -y
 sleep 1
-rm -f webmin-current.deb
+rm -rf webmin_2.111_all.deb
 
 # Use HTTP instead of HTTPS
 sed -i 's|ssl=1|ssl=0|g' /etc/webmin/miniserv.conf
