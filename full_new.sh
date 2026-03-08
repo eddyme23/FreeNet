@@ -1,26 +1,63 @@
 #!/bin/bash
+set -o pipefail
+
+#by GuruzGH
 clear
+
+# Initializing Server
+export DEBIAN_FRONTEND=noninteractive
+source /etc/os-release
+
+SUPPORT_LEVEL="unsupported"
+case "$ID:$VERSION_ID" in
+  ubuntu:20.04) SUPPORT_LEVEL="legacy" ;;
+  ubuntu:22.04) SUPPORT_LEVEL="recommended" ;;
+  ubuntu:24.04) SUPPORT_LEVEL="supported" ;;
+  debian:11) SUPPORT_LEVEL="legacy" ;;
+  debian:12) SUPPORT_LEVEL="supported" ;;
+  debian:13) SUPPORT_LEVEL="blocked" ;;
+  *) SUPPORT_LEVEL="unsupported" ;;
+esac
+
 echo "============================================================"
 echo "              Guruz GH SSH Script Installer"
 echo "============================================================"
 echo ""
-echo "Recommended Operating Systems:"
+echo "Supported Operating Systems:"
 echo ""
-echo "  ✔ Ubuntu 22.04           (Best Choice)"
+echo "  ✔ Ubuntu 22.04           (Recommended)"
 echo "  ✔ Ubuntu 24.04           (Supported)"
 echo "  ✔ Debian 12              (Supported)"
-echo "  ✔ Ubuntu 20              (Legacy Support)"
 echo "  ✔ Debian 11              (Legacy Support)"
+echo "  ✔ Ubuntu 20.04           (Legacy Support)"
 echo ""
 echo "  ⚠ Debian 13 is not supported for this script."
-echo "  Please use Ubuntu 22/24 or Debian 12 for best results."
 echo ""
 echo "============================================================"
-sleep 3
+sleep 2
 
-set -o pipefail
+if [ "$SUPPORT_LEVEL" = "blocked" ]; then
+  echo ""
+  echo "Debian 13 detected."
+  echo "This OS is not fully supported yet."
+  echo "Please install Ubuntu 22/24, Debian 12, Ubuntu 20.04, or Debian 11."
+  echo ""
+  exit 1
+fi
 
-#by GuruzGH
+if [ "$SUPPORT_LEVEL" = "unsupported" ]; then
+  echo "This installer supports Ubuntu 20.04/22.04/24.04 and Debian 11/12 only."
+  echo "Detected: ${ID} ${VERSION_ID}"
+  exit 1
+fi
+
+if [ "$SUPPORT_LEVEL" = "legacy" ]; then
+  echo "Detected ${ID} ${VERSION_ID}."
+  echo "This version is allowed, but marked as legacy support."
+  echo "Ubuntu 22.04 is still the best choice."
+  sleep 3
+fi
+
 #Script Variables
 
 # OpenSSH Ports
@@ -106,21 +143,8 @@ green='\e[0;32m'
 NC='\e[0m'
 
 # Requirement
-apt-get update
-apt-get upgrade -y
-
-# Initializing Server
-export DEBIAN_FRONTEND=noninteractive
-source /etc/os-release
-if [ "$ID" = "debian" ] && [ "$VERSION_ID" = "13" ]; then
-  echo ""
-  echo "Debian 13 detected."
-  echo "This OS is not fully supported yet."
-  echo "Please install on Debian 12 or Ubuntu 22/24."
-  echo ""
-  exit 1
-fi
-
+apt-get update -y
+apt-get upgrade -y --with-new-pkgs
 
 # =========================================================
 # Debian / Ubuntu compatibility detection
@@ -144,12 +168,31 @@ SFTP_SUBSYSTEM="internal-sftp"
 # Make sure required directories exist
 mkdir -p /etc/dropbear /etc/stunnel /etc/nginx/conf.d /etc/deekayvpn /var/run/sslh
 
-
 # Make sure OpenSSH host keys exist
 ssh-keygen -A >/dev/null 2>&1 || true
 
 # Ensure resolver file exists
 touch /etc/resolv.conf
+
+# Helpful compatibility fallbacks
+command -v ss >/dev/null 2>&1 || apt-get install -y iproute2
+command -v netfilter-persistent >/dev/null 2>&1 || apt-get install -y netfilter-persistent iptables-persistent
+command -v jq >/dev/null 2>&1 || apt-get install -y jq
+command -v curl >/dev/null 2>&1 || apt-get install -y curl
+
+# stunnel service fallback
+if ! systemctl list-unit-files | grep -q "^${STUNNEL_SERVICE}\.service"; then
+  if systemctl list-unit-files | grep -q "^stunnel\.service"; then
+    STUNNEL_SERVICE="stunnel"
+  fi
+fi
+
+# squid service fallback
+if ! systemctl list-unit-files | grep -q "^${SQUID_SERVICE}\.service"; then
+  if systemctl list-unit-files | grep -q "^squid3\.service"; then
+    SQUID_SERVICE="squid3"
+  fi
+fi
 
 PACKAGE_LIST=(
   neofetch sslh dnsutils stunnel4 squid dropbear nano sudo wget unzip tar gzip
@@ -427,7 +470,6 @@ enL3UGT+BhRAPiA1I5CcG29RqjCzQoaCNg==
 MyStunnelCert
 
 # Setting stunnel ports
-sed -i "s|MyDomain|$Cloudflare_Domain|g" /etc/stunnel/stunnel.conf
 sed -i "s|Stunnel_Port|$Stunnel_Port|g" /etc/stunnel/stunnel.conf
 sed -i "s|MainPort|$MainPort|g" /etc/stunnel/stunnel.conf
 
