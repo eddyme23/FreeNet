@@ -77,7 +77,7 @@ Squid_Port2='8000'
 # Python Socks Proxy
 WsPorts=('80' '8080' '8880' '2052' '2082' '2086' '2095')  # WS ports to listen on
 WsPort='80'  # default WS port
-WsResponse='HTTP/1.1 101 Switching Protocols\r\n\r\n'
+WsResponse='HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nContent-Length: 104857600000\r\n\r\n'
 
 # SSLH Port
 MainPort='666' # main port to tunnel default 443
@@ -216,10 +216,12 @@ echo 1 > /proc/sys/net/ipv6/conf/all/disable_ipv6
 sysctl -w net.ipv6.conf.all.disable_ipv6=1 && sysctl -w net.ipv6.conf.default.disable_ipv6=1
 
 # Add DNS server ipv4
-rm -f /etc/resolv.conf
-printf 'nameserver %s
-nameserver %s
-' "$Dns_1" "$Dns_2" > /etc/resolv.conf
+if [ -L /etc/resolv.conf ]; then
+  echo "resolv.conf managed externally, skipping overwrite"
+else
+  rm -f /etc/resolv.conf
+  printf 'nameserver %s\nnameserver %s\n' "$Dns_1" "$Dns_2" > /etc/resolv.conf
+fi
 
 # Set System Time
 ln -fs /usr/share/zoneinfo/$MyVPS_Time /etc/localtime
@@ -502,7 +504,10 @@ PASS = ''
 BUFLEN = 16384
 TIMEOUT = 300
 DEFAULT_HOST = '127.0.0.1:$Dropbear_Port1'
-RESPONSE = b'$WsResponse'
+WS_RESPONSE = b'$WsResponse'
+CONNECT_RESPONSE = b'HTTP/1.1 200 OK
+
+'
 
 
 class Server(threading.Thread):
@@ -584,6 +589,7 @@ class ConnectionHandler(threading.Thread):
         self.server = server
         self.log = 'Connection: {}'.format(addr)
         self.target = None
+        self.is_connect = False
 
     def close(self):
         try:
@@ -613,8 +619,12 @@ class ConnectionHandler(threading.Thread):
     def run(self):
         try:
             self.client_buffer = self.client.recv(BUFLEN)
+            request_line = self.client_buffer.splitlines()[0].decode('utf-8', errors='ignore') if self.client_buffer else ''
+            self.is_connect = request_line.startswith('CONNECT ')
 
             host_port = self.find_header(self.client_buffer, 'X-Real-Host')
+            if host_port == '':
+                host_port = self.find_header(self.client_buffer, 'Host')
             if host_port == '':
                 host_port = DEFAULT_HOST
 
@@ -631,14 +641,16 @@ class ConnectionHandler(threading.Thread):
                 if len(PASS) != 0 and passwd == PASS:
                     self.method_connect(host_port)
                 elif len(PASS) != 0 and passwd != PASS:
-                    self.client.sendall(b'HTTP/1.1 400 WrongPass!\r\n\r\n')
-                elif host_port.startswith('127.0.0.1') or host_port.startswith('localhost'):
-                    self.method_connect(host_port)
+                    self.client.sendall(b'HTTP/1.1 400 WrongPass!
+
+')
                 else:
-                    self.client.sendall(b'HTTP/1.1 403 Forbidden!\r\n\r\n')
+                    self.method_connect(host_port)
             else:
-                self.server.print_log('- No X-Real-Host!')
-                self.client.sendall(b'HTTP/1.1 400 NoXRealHost!\r\n\r\n')
+                self.server.print_log('- No host header!')
+                self.client.sendall(b'HTTP/1.1 400 NoHost!
+
+')
 
         except Exception as e:
             self.log += ' - error: {}'.format(str(e))
@@ -653,25 +665,21 @@ class ConnectionHandler(threading.Thread):
         except Exception:
             return ''
 
-        marker = header + ': '
-        pos = text.find(marker)
-        if pos == -1:
-            return ''
-
-        value_start = pos + len(marker)
-        value_end = text.find('\r\n', value_start)
-        if value_end == -1:
-            return ''
-
-        return text[value_start:value_end].strip()
+        for line in text.splitlines():
+            if ':' not in line:
+                continue
+            k, v = line.split(':', 1)
+            if k.strip().lower() == header.lower():
+                return v.strip()
+        return ''
 
     def connect_target(self, host):
-        i = host.find(':')
-        if i != -1:
+        i = host.rfind(':')
+        if i != -1 and host.count(':') == 1:
             port = int(host[i + 1:])
             host = host[:i]
         else:
-            port = LISTENING_PORT
+            port = 443 if self.is_connect else LISTENING_PORT
 
         info = socket.getaddrinfo(host, port, socket.AF_UNSPEC, socket.SOCK_STREAM)
         soc_family, soc_type, proto, _, address = info[0]
@@ -686,7 +694,7 @@ class ConnectionHandler(threading.Thread):
     def method_connect(self, path):
         self.log += ' - CONNECT {}'.format(path)
         self.connect_target(path)
-        self.client.sendall(RESPONSE)
+        self.client.sendall(CONNECT_RESPONSE if self.is_connect else WS_RESPONSE)
         self.client_buffer = b''
         self.server.print_log(self.log)
         self.do_connect()
@@ -760,10 +768,14 @@ def main():
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
 
-    print('\n:-------PythonProxy-------:\n')
+    print('
+:-------PythonProxy-------:
+')
     print('Listening addr: ' + LISTENING_ADDR)
-    print('Listening port: ' + str(LISTENING_PORT) + '\n')
-    print(':-------------------------:\n')
+    print('Listening port: ' + str(LISTENING_PORT) + '
+')
+    print(':-------------------------:
+')
 
     server = Server(LISTENING_ADDR, LISTENING_PORT)
     server.daemon = True
@@ -789,7 +801,8 @@ cat <<'service' > /etc/systemd/system/ws@.service
 [Unit]
 Description=Websocket Python3 (port %i)
 Documentation=https://google.com
-After=network.target nss-lookup.target
+After=network.target nss-lookup.target dropbear.service
+Requires=dropbear.service
 Wants=network-online.target
 
 [Service]
@@ -800,13 +813,14 @@ Environment=PYTHONUNBUFFERED=1
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
 NoNewPrivileges=true
-LimitNOFILE=1048576
+LimitNOFILE=65535
 TasksMax=infinity
 Restart=on-failure
 RestartSec=5
 StartLimitIntervalSec=60
 StartLimitBurst=3
 ExecStartPre=/usr/bin/python3 -m py_compile /etc/socksproxy/proxy.py
+ExecStartPre=/bin/sleep 2
 ExecStart=/usr/bin/python3 -O /etc/socksproxy/proxy.py -b 0.0.0.0 -p %i
 StandardOutput=journal
 StandardError=journal
@@ -818,6 +832,7 @@ service
 
 # Start WS instances for every port in WsPorts[]
 systemctl daemon-reload
+systemctl restart "$DROPBEAR_SERVICE" || true
 for p in "${WsPorts[@]}"; do
   systemctl enable "ws@${p}"
   systemctl restart "ws@${p}"
@@ -919,7 +934,6 @@ max_filedescriptors 65535
 http_access allow server
 http_access allow checker
 http_access deny all
-http_access allow all
 forwarded_for off
 via off
 request_header_access Host allow all
@@ -1348,8 +1362,12 @@ iptables -t nat -C PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 5300 2>/d
 echo 1 > /proc/sys/net/ipv6/conf/all/disable_ipv6
 
 # Add DNS server ipv4
-echo "nameserver DNS1" > /etc/resolv.conf
-echo "nameserver DNS2" >> /etc/resolv.conf
+if [ -L /etc/resolv.conf ]; then
+  echo "resolv.conf managed externally, skipping overwrite"
+else
+  echo "nameserver DNS1" > /etc/resolv.conf
+  echo "nameserver DNS2" >> /etc/resolv.conf
+fi
 
 # For sslh
 mkdir -p /var/run/sslh
