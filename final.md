@@ -1,3 +1,3 @@
-INSTALLATION LINK
+#INSTALLATION LINK
 
 bash <(curl -sL https://raw.githubusercontent.com/eddyme23/FreeNet/master/final.sh)
