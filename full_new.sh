@@ -77,7 +77,7 @@ Squid_Port2='8000'
 # Python Socks Proxy
 WsPorts=('80' '8080' '8880' '2052' '2082' '2086' '2095')  # WS ports to listen on
 WsPort='80'  # default WS port
-WsResponse='HTTP/1.1 101 Switching Protocols\r\n\r\n'
+WsResponse='HTTP/1.1 101 Switching Guruz FreeNet Protocols\r\n\r\n'
 
 # SSLH Port
 MainPort='666' # main port to tunnel default 443
