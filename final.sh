@@ -215,11 +215,12 @@ done
 echo 1 > /proc/sys/net/ipv6/conf/all/disable_ipv6
 sysctl -w net.ipv6.conf.all.disable_ipv6=1 && sysctl -w net.ipv6.conf.default.disable_ipv6=1
 
-# Add DNS server ipv4
-rm -f /etc/resolv.conf
+# Add DNS server ipv4 safely on systems that do not symlink resolv.conf
+if [ ! -L /etc/resolv.conf ]; then
 printf 'nameserver %s
 nameserver %s
 ' "$Dns_1" "$Dns_2" > /etc/resolv.conf
+fi
 
 # Set System Time
 ln -fs /usr/share/zoneinfo/$MyVPS_Time /etc/localtime
