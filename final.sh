@@ -90,6 +90,8 @@ Serverpub='7fbd1f8aa0abfe15a7903e837f78aba39cf61d36f183bd604daa2fe4ef3b7b59'
 
 # UDP HYSTERIA | UDP PORT | OBFS | PASSWORDS
 UDP_PORT=":36712"
+HYST_PORT="${UDP_PORT##*:}"
+
 
 # Prompt installer for Hysteria obfs and password
 _default_obfs='sa4uhy'
@@ -162,7 +164,6 @@ SQUID_SERVICE="squid"
 SSLH_SERVICE="sslh"
 NGINX_SERVICE="nginx"
 
-# Safe fallback defaults
 SSH_SERVICE="${SSH_SERVICE:-ssh}"
 DROPBEAR_SERVICE="${DROPBEAR_SERVICE:-dropbear}"
 STUNNEL_SERVICE="${STUNNEL_SERVICE:-stunnel4}"
@@ -175,6 +176,31 @@ SFTP_SUBSYSTEM="internal-sftp"
 
 # Make sure required directories exist
 mkdir -p /etc/dropbear /etc/stunnel /etc/nginx/conf.d /etc/deekayvpn /var/run/sslh
+
+ensure_service_active() {
+  local unit="$1"
+  systemctl is-active --quiet "$unit" && return 0
+  echo "ERROR: service '$unit' failed to start" >&2
+  journalctl -u "$unit" --no-pager -n 50 >&2 || true
+  exit 1
+}
+
+ensure_tcp_listener() {
+  local port="$1"
+  ss -lnt | awk '{print $4}' | grep -q ":${port}$" && return 0
+  echo "ERROR: TCP port ${port} is not listening" >&2
+  ss -lnt >&2 || true
+  exit 1
+}
+
+ensure_udp_input_rule() {
+  local port="$1"
+  iptables -C INPUT -p udp --dport "$port" -j ACCEPT 2>/dev/null ||   iptables -I INPUT -p udp --dport "$port" -j ACCEPT
+}
+
+save_firewall_rules() {
+  netfilter-persistent save >/dev/null 2>&1 ||   iptables-save > /etc/iptables/rules.v4
+}
 
 # Make sure OpenSSH host keys exist
 ssh-keygen -A >/dev/null 2>&1 || true
@@ -308,8 +334,6 @@ HostKey /etc/ssh/ssh_host_ecdsa_key
 HostKey /etc/ssh/ssh_host_ed25519_key
 PermitRootLogin yes
 MaxSessions 1024
-MaxStartups 200:30:400
-LoginGraceTime 30
 PubkeyAuthentication yes
 PasswordAuthentication yes
 PermitEmptyPasswords no
@@ -343,6 +367,9 @@ echo '/usr/sbin/nologin' >> /etc/shells
 
 # Restarting openssh service
 systemctl restart "$SSH_SERVICE"
+ensure_service_active "$SSH_SERVICE"
+ensure_tcp_listener "$SSH_Port1"
+ensure_tcp_listener "$SSH_Port2"
 systemctl status --no-pager "$SSH_SERVICE"
 
 # Removing some duplicate config file
@@ -367,6 +394,9 @@ sed -i "s|PORT02|$Dropbear_Port2|g" /etc/default/dropbear
 
 # Restarting dropbear service
 systemctl restart "$DROPBEAR_SERVICE"
+ensure_service_active "$DROPBEAR_SERVICE"
+ensure_tcp_listener "$Dropbear_Port1"
+ensure_tcp_listener "$Dropbear_Port2"
 systemctl status --no-pager "$DROPBEAR_SERVICE"
 
 cd /etc/default/
@@ -376,7 +406,7 @@ RUN=yes
 
 DAEMON=/usr/sbin/sslh
 
-DAEMON_OPTS="--user sslh --listen 127.0.0.1:$MainPort --ssh 127.0.0.1:$Dropbear_Port1 --http 127.0.0.1:$WsPort --pidfile /var/run/sslh/sslh.pid"
+DAEMON_OPTS="--user sslh --listen 127.0.0.1:$MainPort --ssh 127.0.0.1:$SSH_Port1 --http 127.0.0.1:$WsPort --pidfile /var/run/sslh/sslh.pid"
 
 sslh
 
@@ -390,6 +420,8 @@ systemctl daemon-reload
 systemctl enable "$SSLH_SERVICE"
 systemctl start "$SSLH_SERVICE"
 systemctl restart "$SSLH_SERVICE"
+ensure_service_active "$SSLH_SERVICE"
+ensure_tcp_listener "$MainPort"
 systemctl status --no-pager "$SSLH_SERVICE"
 cd
 
@@ -485,6 +517,8 @@ sed -i "s|MainPort|$MainPort|g" /etc/stunnel/stunnel.conf
 # Restarting stunnel service
 systemctl restart "$STUNNEL_SERVICE"
 systemctl enable "$STUNNEL_SERVICE"
+ensure_service_active "$STUNNEL_SERVICE"
+ensure_tcp_listener "$Stunnel_Port"
 systemctl status --no-pager "$STUNNEL_SERVICE"
 
 # Setting Up Socks
@@ -1042,7 +1076,7 @@ clear_fail() {
     rm -f "$STATE_DIR/${name}.fail"
 }
 
-restart_after_3_fails() {
+restart_after_5_fails() {
     local name="$1"
     local unit="$2"
     local ports="$3"
@@ -1050,7 +1084,7 @@ restart_after_3_fails() {
     local fails
     fails=$(mark_fail "$name")
 
-    if [ "$fails" -ge 3 ]; then
+    if [ "$fails" -ge 5 ]; then
         systemctl restart "$unit" >/dev/null 2>&1
         TEXT="Service *$unit* was offline or missing port(s) *$ports* on server *${IPCOUNTRY}* ($server_ip). It has been restarted at *${datenow}*."
         send_telegram_message "$TEXT"
@@ -1062,42 +1096,42 @@ restart_after_3_fails() {
 if check_port DROPBEARPORT1 && check_port DROPBEARPORT2 && systemctl is-active --quiet dropbear; then
     clear_fail dropbear
 else
-    restart_after_3_fails dropbear dropbear "DROPBEARPORT1,DROPBEARPORT2"
+    restart_after_5_fails dropbear dropbear "DROPBEARPORT1,DROPBEARPORT2"
 fi
 
 # stunnel
 if check_port STUNNELPORT && systemctl is-active --quiet stunnel4; then
     clear_fail stunnel4
 else
-    restart_after_3_fails stunnel4 stunnel4 "STUNNELPORT"
+    restart_after_5_fails stunnel4 stunnel4 "STUNNELPORT"
 fi
 
 # sslh
 if check_port SSLHPORT && systemctl is-active --quiet sslh; then
     clear_fail sslh
 else
-    restart_after_3_fails sslh sslh "SSLHPORT"
+    restart_after_5_fails sslh sslh "SSLHPORT"
 fi
 
 # squid
 if check_port SQUIDPORT1 && check_port SQUIDPORT2 && systemctl is-active --quiet squid; then
     clear_fail squid
 else
-    restart_after_3_fails squid squid "SQUIDPORT1,SQUIDPORT2"
+    restart_after_5_fails squid squid "SQUIDPORT1,SQUIDPORT2"
 fi
 
 # nginx
 if check_port NGINXPORT && systemctl is-active --quiet nginx; then
     clear_fail nginx
 else
-    restart_after_3_fails nginx nginx "NGINXPORT"
+    restart_after_5_fails nginx nginx "NGINXPORT"
 fi
 
 # ssh
 if check_port SSHPORT1 && check_port SSHPORT2 && systemctl is-active --quiet ssh; then
     clear_fail ssh
 else
-    restart_after_3_fails ssh ssh "SSHPORT1,SSHPORT2"
+    mark_fail ssh >/dev/null
 fi
 
 # sync WS checker ports from WsPorts array
@@ -1109,7 +1143,7 @@ for port in WS_PORT_LIST; do
     if check_port "$port" && systemctl is-active --quiet "$unit"; then
         clear_fail "$name"
     else
-        restart_after_3_fails "$name" "$unit" "$port"
+        restart_after_5_fails "$name" "$unit" "$port"
     fi
 done
 ServiceChecker
@@ -1258,8 +1292,6 @@ rm -f /etc/hysteria/config.json
 # Ensure /etc/hysteria exists
 mkdir -p /etc/hysteria
 
-# Derive numeric port from UDP_PORT (accepts formats like ":36712" or "0.0.0.0:36712")
-HYST_PORT="${UDP_PORT##*:}"
 
 # Create the hysteria config with proper variable expansion
 cat > /etc/hysteria/config.json <<EOF
@@ -1371,19 +1403,12 @@ chmod 755 /etc/hysteria/hysteria.crt
 chmod 755 /etc/hysteria/hysteria.key
 
 # Add iptables NAT rule - use detected interface and the derived hysteria port
-IFACE="$(ip -4 route ls default | awk '{print $5; exit}')"
-if [ -n "$IFACE" ]; then
-  iptables -C INPUT -p udp --dport "$HYST_PORT" -j ACCEPT 2>/dev/null || iptables -I INPUT -p udp --dport "$HYST_PORT" -j ACCEPT
-  iptables -t nat -C PREROUTING -i "$IFACE" -p udp --dport 20000:50000 -j DNAT --to-destination :$HYST_PORT 2>/dev/null || \
-  iptables -t nat -A PREROUTING -i "$IFACE" -p udp --dport 20000:50000 -j DNAT --to-destination :$HYST_PORT
-else
-  echo "Warning: could not detect default interface for Hysteria DNAT"
-fi
+IFACE="$(ip -4 route ls|grep default|grep -Po '(?<=dev )(\S+)'|head -1)"
+iptables -t nat -C PREROUTING -i "$IFACE" -p udp --dport 20000:50000 -j DNAT --to-destination :$HYST_PORT 2>/dev/null || \
+iptables -t nat -A PREROUTING -i "$IFACE" -p udp --dport 20000:50000 -j DNAT --to-destination :$HYST_PORT
 systemctl enable hysteria-server.service
 systemctl restart hysteria-server.service
-systemctl status --no-pager hysteria-server.service || true
-systemctl is-active --quiet hysteria-server.service || echo "Warning: hysteria-server.service is not active"
-netfilter-persistent save >/dev/null 2>&1 || iptables-save > /etc/iptables/rules.v4
+systemctl status --no-pager hysteria-server.service
 
 # Creating startup 1 script using cat eof tricks
 cat <<'deekayz' > /etc/deekaystartup
@@ -1416,7 +1441,7 @@ chmod 777 /var/run/sslh/sslh.pid
 # For udp
 IFACE=$(ip -4 route ls default | awk '{print $5; exit}')
 iptables -C INPUT -p udp --dport HYSTPORT -j ACCEPT 2>/dev/null || iptables -I INPUT -p udp --dport HYSTPORT -j ACCEPT
-[ -n "$IFACE" ] && iptables -t nat -C PREROUTING -i "$IFACE" -p udp --dport 20000:50000 -j DNAT --to-destination :HYSTPORT 2>/dev/null || [ -n "$IFACE" ] && iptables -t nat -A PREROUTING -i "$IFACE" -p udp --dport 20000:50000 -j DNAT --to-destination :HYSTPORT
+iptables -t nat -C PREROUTING -i "$IFACE" -p udp --dport 20000:50000 -j DNAT --to-destination :HYSTPORT 2>/dev/null || iptables -t nat -A PREROUTING -i "$IFACE" -p udp --dport 20000:50000 -j DNAT --to-destination :HYSTPORT
 
 deekayz
 
