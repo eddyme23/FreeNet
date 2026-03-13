@@ -77,7 +77,7 @@ Squid_Port2='8000'
 # Python Socks Proxy
 WsPorts=('80' '8080' '8880' '2052' '2082' '2086' '2095')  # WS ports to listen on
 WsPort='80'  # default WS port
-WsResponse='HTTP/1.1 101 Switching Guruz FreeNet Protocols\r\n\r\n'
+WsResponse='HTTP/1.1 101 Switching Protocols\r\n\r\n'
 
 # SSLH Port
 MainPort='666' # main port to tunnel default 443
@@ -90,8 +90,6 @@ Serverpub='7fbd1f8aa0abfe15a7903e837f78aba39cf61d36f183bd604daa2fe4ef3b7b59'
 
 # UDP HYSTERIA | UDP PORT | OBFS | PASSWORDS
 UDP_PORT=":36712"
-HYST_PORT="${UDP_PORT##*:}"
-
 
 # Prompt installer for Hysteria obfs and password
 _default_obfs='sa4uhy'
@@ -164,43 +162,11 @@ SQUID_SERVICE="squid"
 SSLH_SERVICE="sslh"
 NGINX_SERVICE="nginx"
 
-SSH_SERVICE="${SSH_SERVICE:-ssh}"
-DROPBEAR_SERVICE="${DROPBEAR_SERVICE:-dropbear}"
-STUNNEL_SERVICE="${STUNNEL_SERVICE:-stunnel4}"
-SQUID_SERVICE="${SQUID_SERVICE:-squid}"
-SSLH_SERVICE="${SSLH_SERVICE:-sslh}"
-NGINX_SERVICE="${NGINX_SERVICE:-nginx}"
-
 # Prefer internal-sftp for cross-distro compatibility
 SFTP_SUBSYSTEM="internal-sftp"
 
 # Make sure required directories exist
 mkdir -p /etc/dropbear /etc/stunnel /etc/nginx/conf.d /etc/deekayvpn /var/run/sslh
-
-ensure_service_active() {
-  local unit="$1"
-  systemctl is-active --quiet "$unit" && return 0
-  echo "ERROR: service '$unit' failed to start" >&2
-  journalctl -u "$unit" --no-pager -n 50 >&2 || true
-  exit 1
-}
-
-ensure_tcp_listener() {
-  local port="$1"
-  ss -lnt | awk '{print $4}' | grep -q ":${port}$" && return 0
-  echo "ERROR: TCP port ${port} is not listening" >&2
-  ss -lnt >&2 || true
-  exit 1
-}
-
-ensure_udp_input_rule() {
-  local port="$1"
-  iptables -C INPUT -p udp --dport "$port" -j ACCEPT 2>/dev/null ||   iptables -I INPUT -p udp --dport "$port" -j ACCEPT
-}
-
-save_firewall_rules() {
-  netfilter-persistent save >/dev/null 2>&1 ||   iptables-save > /etc/iptables/rules.v4
-}
 
 # Make sure OpenSSH host keys exist
 ssh-keygen -A >/dev/null 2>&1 || true
@@ -249,12 +215,11 @@ done
 echo 1 > /proc/sys/net/ipv6/conf/all/disable_ipv6
 sysctl -w net.ipv6.conf.all.disable_ipv6=1 && sysctl -w net.ipv6.conf.default.disable_ipv6=1
 
-# Add DNS server ipv4 safely on systems that do not symlink resolv.conf
-if [ ! -L /etc/resolv.conf ]; then
+# Add DNS server ipv4
+rm -f /etc/resolv.conf
 printf 'nameserver %s
 nameserver %s
 ' "$Dns_1" "$Dns_2" > /etc/resolv.conf
-fi
 
 # Set System Time
 ln -fs /usr/share/zoneinfo/$MyVPS_Time /etc/localtime
@@ -334,6 +299,8 @@ HostKey /etc/ssh/ssh_host_ecdsa_key
 HostKey /etc/ssh/ssh_host_ed25519_key
 PermitRootLogin yes
 MaxSessions 1024
+MaxStartups 200:30:400
+LoginGraceTime 30
 PubkeyAuthentication yes
 PasswordAuthentication yes
 PermitEmptyPasswords no
@@ -367,9 +334,6 @@ echo '/usr/sbin/nologin' >> /etc/shells
 
 # Restarting openssh service
 systemctl restart "$SSH_SERVICE"
-ensure_service_active "$SSH_SERVICE"
-ensure_tcp_listener "$SSH_Port1"
-ensure_tcp_listener "$SSH_Port2"
 systemctl status --no-pager "$SSH_SERVICE"
 
 # Removing some duplicate config file
@@ -394,9 +358,6 @@ sed -i "s|PORT02|$Dropbear_Port2|g" /etc/default/dropbear
 
 # Restarting dropbear service
 systemctl restart "$DROPBEAR_SERVICE"
-ensure_service_active "$DROPBEAR_SERVICE"
-ensure_tcp_listener "$Dropbear_Port1"
-ensure_tcp_listener "$Dropbear_Port2"
 systemctl status --no-pager "$DROPBEAR_SERVICE"
 
 cd /etc/default/
@@ -406,7 +367,7 @@ RUN=yes
 
 DAEMON=/usr/sbin/sslh
 
-DAEMON_OPTS="--user sslh --listen 127.0.0.1:$MainPort --ssh 127.0.0.1:$SSH_Port1 --http 127.0.0.1:$WsPort --pidfile /var/run/sslh/sslh.pid"
+DAEMON_OPTS="--user sslh --listen 127.0.0.1:$MainPort --ssh 127.0.0.1:$Dropbear_Port1 --http 127.0.0.1:$WsPort --pidfile /var/run/sslh/sslh.pid"
 
 sslh
 
@@ -420,8 +381,6 @@ systemctl daemon-reload
 systemctl enable "$SSLH_SERVICE"
 systemctl start "$SSLH_SERVICE"
 systemctl restart "$SSLH_SERVICE"
-ensure_service_active "$SSLH_SERVICE"
-ensure_tcp_listener "$MainPort"
 systemctl status --no-pager "$SSLH_SERVICE"
 cd
 
@@ -517,8 +476,6 @@ sed -i "s|MainPort|$MainPort|g" /etc/stunnel/stunnel.conf
 # Restarting stunnel service
 systemctl restart "$STUNNEL_SERVICE"
 systemctl enable "$STUNNEL_SERVICE"
-ensure_service_active "$STUNNEL_SERVICE"
-ensure_tcp_listener "$Stunnel_Port"
 systemctl status --no-pager "$STUNNEL_SERVICE"
 
 # Setting Up Socks
@@ -535,24 +492,17 @@ import sys
 import threading
 import time
 
+# CONFIG
 LISTENING_ADDR = '0.0.0.0'
 LISTENING_PORT = $WsPort
+
 PASS = ''
 
+# CONST
 BUFLEN = 16384
 TIMEOUT = 300
 DEFAULT_HOST = '127.0.0.1:$Dropbear_Port1'
-
-WS_RESPONSE = (
-    b'HTTP/1.1 101 <b><i><font color="green">WELCOME TO NETWORK TWEAKER</font></b>\r\n'
-    b'Upgrade: websocket\r\n'
-    b'Connection: Upgrade\r\n'
-    b'Sec-WebSocket-Accept: foo\r\n'
-    b'Content-Length: 104857600000\r\n'
-    b'\r\n'
-)
-
-CONNECT_RESPONSE = b'HTTP/1.1 200 OK\r\n\r\n'
+RESPONSE = b'$WsResponse'
 
 
 class Server(threading.Thread):
@@ -632,7 +582,7 @@ class ConnectionHandler(threading.Thread):
         self.client = soc_client
         self.client_buffer = b''
         self.server = server
-        self.log = f'Connection: {addr}'
+        self.log = 'Connection: {}'.format(addr)
         self.target = None
 
     def close(self):
@@ -663,12 +613,8 @@ class ConnectionHandler(threading.Thread):
     def run(self):
         try:
             self.client_buffer = self.client.recv(BUFLEN)
-            request_line = self.get_request_line(self.client_buffer)
-            is_connect = request_line.upper().startswith('CONNECT ')
 
             host_port = self.find_header(self.client_buffer, 'X-Real-Host')
-            if host_port == '':
-                host_port = self.find_header(self.client_buffer, 'X-Online-Host')
             if host_port == '':
                 host_port = DEFAULT_HOST
 
@@ -683,29 +629,23 @@ class ConnectionHandler(threading.Thread):
                 passwd = self.find_header(self.client_buffer, 'X-Pass')
 
                 if len(PASS) != 0 and passwd == PASS:
-                    self.method_connect(host_port, is_connect)
+                    self.method_connect(host_port)
                 elif len(PASS) != 0 and passwd != PASS:
                     self.client.sendall(b'HTTP/1.1 400 WrongPass!\r\n\r\n')
+                elif host_port.startswith('127.0.0.1') or host_port.startswith('localhost'):
+                    self.method_connect(host_port)
                 else:
-                    self.method_connect(host_port, is_connect)
+                    self.client.sendall(b'HTTP/1.1 403 Forbidden!\r\n\r\n')
             else:
-                self.server.print_log('- No host header found!')
-                self.client.sendall(b'HTTP/1.1 400 NoHost!\r\n\r\n')
+                self.server.print_log('- No X-Real-Host!')
+                self.client.sendall(b'HTTP/1.1 400 NoXRealHost!\r\n\r\n')
 
         except Exception as e:
-            self.log += f' - error: {e}'
+            self.log += ' - error: {}'.format(str(e))
             self.server.print_log(self.log)
         finally:
             self.close()
             self.server.remove_conn(self)
-
-    def get_request_line(self, head):
-        try:
-            text = head.decode('utf-8', errors='ignore')
-        except Exception:
-            return ''
-        lines = text.splitlines()
-        return lines[0].strip() if lines else ''
 
     def find_header(self, head, header):
         try:
@@ -713,14 +653,17 @@ class ConnectionHandler(threading.Thread):
         except Exception:
             return ''
 
-        for line in text.splitlines():
-            if ':' not in line:
-                continue
-            key, value = line.split(':', 1)
-            if key.strip().lower() == header.lower():
-                return value.strip()
+        marker = header + ': '
+        pos = text.find(marker)
+        if pos == -1:
+            return ''
 
-        return ''
+        value_start = pos + len(marker)
+        value_end = text.find('\r\n', value_start)
+        if value_end == -1:
+            return ''
+
+        return text[value_start:value_end].strip()
 
     def connect_target(self, host):
         i = host.find(':')
@@ -730,7 +673,7 @@ class ConnectionHandler(threading.Thread):
         else:
             port = LISTENING_PORT
 
-        info = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
+        info = socket.getaddrinfo(host, port, socket.AF_UNSPEC, socket.SOCK_STREAM)
         soc_family, soc_type, proto, _, address = info[0]
 
         self.target = socket.socket(soc_family, soc_type, proto)
@@ -740,15 +683,10 @@ class ConnectionHandler(threading.Thread):
         self.target.settimeout(None)
         self.target_closed = False
 
-    def method_connect(self, path, is_connect=False):
-        self.log += f' - CONNECT {path}'
+    def method_connect(self, path):
+        self.log += ' - CONNECT {}'.format(path)
         self.connect_target(path)
-
-        if is_connect:
-            self.client.sendall(CONNECT_RESPONSE)
-        else:
-            self.client.sendall(WS_RESPONSE)
-
+        self.client.sendall(RESPONSE)
         self.client_buffer = b''
         self.server.print_log(self.log)
         self.do_connect()
@@ -845,7 +783,6 @@ if __name__ == '__main__':
     main()
 EOF
 chmod +x $loc/proxy.py
-
 
 # Creating a template service so we can run WS on multiple ports
 cat <<'service' > /etc/systemd/system/ws@.service
@@ -969,59 +906,38 @@ rm -rf /etc/squid/squid.con*
  
 # Creating Squid server config using cat eof tricks
 cat <<'mySquid' > /etc/squid/squid.conf
-# My Squid Proxy Server Config (compat mode)
-acl localhost src 127.0.0.1/32
+# My Squid Proxy Server Config
+acl server dst IP-ADDRESS/32 localhost
 acl checker src 188.93.95.137
-acl server dst all
-
-acl SSL_ports port 443
-acl SSL_ports port 80
-acl SSL_ports port 8080
-acl SSL_ports port 8880
-acl SSL_ports port 8000
-acl SSL_ports port 3128
-acl SSL_ports port 790
-acl SSL_ports port 550
-
-acl Safe_ports port 80
-acl Safe_ports port 443
-acl Safe_ports port 8080
-acl Safe_ports port 8880
-acl Safe_ports port 8000
-acl Safe_ports port 3128
-acl Safe_ports port 790
-acl Safe_ports port 550
-acl CONNECT method CONNECT
-
+acl ports_ port 14 22 53 21 8080 8081 8880 25 8000 3128 1193 1194 440 441 442 299 550 790 443 80
 http_port Squid_Port1
 http_port Squid_Port2
-access_log stdio:/var/log/squid/access.log
-cache_log /var/log/squid/cache.log
+access_log none
+cache_log /dev/null
 logfile_rotate 0
 max_filedescriptors 65535
-cache deny all
-
-http_access deny !Safe_ports
-http_access deny CONNECT !SSL_ports
-http_access allow localhost
-http_access allow checker
 http_access allow server
+http_access allow checker
 http_access deny all
-
+http_access allow all
 forwarded_for off
 via off
 request_header_access Host allow all
 request_header_access Content-Length allow all
 request_header_access Content-Type allow all
 request_header_access All deny all
+hierarchy_stoplist cgi-bin ?
 coredump_dir /var/spool/squid
 refresh_pattern ^ftp: 1440 20% 10080
 refresh_pattern ^gopher: 1440 0% 1440
 refresh_pattern -i (/cgi-bin/|\?) 0 0% 0
 refresh_pattern . 0 20% 4320
-visible_hostname guruzgh
+visible_hostname IP-ADDRESS
 mySquid
 
+# Setting machine's IP Address inside of our Squid config(security that only allows this machine to use this proxy server)
+sed -i "s|IP-ADDRESS|$IPADDR|g" /etc/squid/squid.conf
+ 
 # Setting squid ports
 sed -i "s|Squid_Port1|$Squid_Port1|g" /etc/squid/squid.conf
 sed -i "s|Squid_Port2|$Squid_Port2|g" /etc/squid/squid.conf
@@ -1076,7 +992,7 @@ clear_fail() {
     rm -f "$STATE_DIR/${name}.fail"
 }
 
-restart_after_5_fails() {
+restart_after_3_fails() {
     local name="$1"
     local unit="$2"
     local ports="$3"
@@ -1084,7 +1000,7 @@ restart_after_5_fails() {
     local fails
     fails=$(mark_fail "$name")
 
-    if [ "$fails" -ge 5 ]; then
+    if [ "$fails" -ge 3 ]; then
         systemctl restart "$unit" >/dev/null 2>&1
         TEXT="Service *$unit* was offline or missing port(s) *$ports* on server *${IPCOUNTRY}* ($server_ip). It has been restarted at *${datenow}*."
         send_telegram_message "$TEXT"
@@ -1096,42 +1012,42 @@ restart_after_5_fails() {
 if check_port DROPBEARPORT1 && check_port DROPBEARPORT2 && systemctl is-active --quiet dropbear; then
     clear_fail dropbear
 else
-    restart_after_5_fails dropbear dropbear "DROPBEARPORT1,DROPBEARPORT2"
+    restart_after_3_fails dropbear dropbear "DROPBEARPORT1,DROPBEARPORT2"
 fi
 
 # stunnel
 if check_port STUNNELPORT && systemctl is-active --quiet stunnel4; then
     clear_fail stunnel4
 else
-    restart_after_5_fails stunnel4 stunnel4 "STUNNELPORT"
+    restart_after_3_fails stunnel4 stunnel4 "STUNNELPORT"
 fi
 
 # sslh
 if check_port SSLHPORT && systemctl is-active --quiet sslh; then
     clear_fail sslh
 else
-    restart_after_5_fails sslh sslh "SSLHPORT"
+    restart_after_3_fails sslh sslh "SSLHPORT"
 fi
 
 # squid
 if check_port SQUIDPORT1 && check_port SQUIDPORT2 && systemctl is-active --quiet squid; then
     clear_fail squid
 else
-    restart_after_5_fails squid squid "SQUIDPORT1,SQUIDPORT2"
+    restart_after_3_fails squid squid "SQUIDPORT1,SQUIDPORT2"
 fi
 
 # nginx
 if check_port NGINXPORT && systemctl is-active --quiet nginx; then
     clear_fail nginx
 else
-    restart_after_5_fails nginx nginx "NGINXPORT"
+    restart_after_3_fails nginx nginx "NGINXPORT"
 fi
 
 # ssh
 if check_port SSHPORT1 && check_port SSHPORT2 && systemctl is-active --quiet ssh; then
     clear_fail ssh
 else
-    mark_fail ssh >/dev/null
+    restart_after_3_fails ssh ssh "SSHPORT1,SSHPORT2"
 fi
 
 # sync WS checker ports from WsPorts array
@@ -1143,7 +1059,7 @@ for port in WS_PORT_LIST; do
     if check_port "$port" && systemctl is-active --quiet "$unit"; then
         clear_fail "$name"
     else
-        restart_after_5_fails "$name" "$unit" "$port"
+        restart_after_3_fails "$name" "$unit" "$port"
     fi
 done
 ServiceChecker
@@ -1292,6 +1208,8 @@ rm -f /etc/hysteria/config.json
 # Ensure /etc/hysteria exists
 mkdir -p /etc/hysteria
 
+# Derive numeric port from UDP_PORT (accepts formats like ":36712" or "0.0.0.0:36712")
+HYST_PORT="${UDP_PORT##*:}"
 
 # Create the hysteria config with proper variable expansion
 cat > /etc/hysteria/config.json <<EOF
@@ -1439,16 +1357,14 @@ touch /var/run/sslh/sslh.pid
 chmod 777 /var/run/sslh/sslh.pid
 
 # For udp
-IFACE=$(ip -4 route ls default | awk '{print $5; exit}')
-iptables -C INPUT -p udp --dport HYSTPORT -j ACCEPT 2>/dev/null || iptables -I INPUT -p udp --dport HYSTPORT -j ACCEPT
-iptables -t nat -C PREROUTING -i "$IFACE" -p udp --dport 20000:50000 -j DNAT --to-destination :HYSTPORT 2>/dev/null || iptables -t nat -A PREROUTING -i "$IFACE" -p udp --dport 20000:50000 -j DNAT --to-destination :HYSTPORT
+IFACE=$(ip -4 route ls|grep default|grep -Po '(?<=dev )(\S+)'|head -1)
+iptables -t nat -C PREROUTING -i "$IFACE" -p udp --dport 20000:50000 -j DNAT --to-destination :36712 2>/dev/null || iptables -t nat -A PREROUTING -i "$IFACE" -p udp --dport 20000:50000 -j DNAT --to-destination :36712
 
 deekayz
 
 sed -i "s|MyTimeZone|$MyVPS_Time|g" /etc/deekaystartup
 sed -i "s|DNS1|$Dns_1|g" /etc/deekaystartup
 sed -i "s|DNS2|$Dns_2|g" /etc/deekaystartup
-sed -i "s|HYSTPORT|$HYST_PORT|g" /etc/deekaystartup
 #rm -rf /etc/sysctl.d/99*
 
  # Setting our startup script to run every machine boots 
