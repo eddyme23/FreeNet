@@ -77,7 +77,7 @@ Squid_Port2='8000'
 # Python Socks Proxy
 WsPorts=('80' '8080' '8880' '2052' '2082' '2086' '2095')  # WS ports to listen on
 WsPort='80'  # default WS port
-WsResponse='HTTP/1.1 101 Switching Protocols\r\n\r\n'
+WsResponse='HTTP/1.1 101 Switching Guruz FreeNet Protocols\r\n\r\n'
 
 # SSLH Port
 MainPort='666' # main port to tunnel default 443
@@ -215,11 +215,12 @@ done
 echo 1 > /proc/sys/net/ipv6/conf/all/disable_ipv6
 sysctl -w net.ipv6.conf.all.disable_ipv6=1 && sysctl -w net.ipv6.conf.default.disable_ipv6=1
 
-# Add DNS server ipv4
-rm -f /etc/resolv.conf
+# Add DNS server ipv4 safely on systems that do not symlink resolv.conf
+if [ ! -L /etc/resolv.conf ]; then
 printf 'nameserver %s
 nameserver %s
 ' "$Dns_1" "$Dns_2" > /etc/resolv.conf
+fi
 
 # Set System Time
 ln -fs /usr/share/zoneinfo/$MyVPS_Time /etc/localtime
@@ -332,8 +333,29 @@ sed -i '/\/usr\/sbin\/nologin/d' /etc/shells
 echo '/bin/false' >> /etc/shells
 echo '/usr/sbin/nologin' >> /etc/shells
 
+ensure_service_active() {
+    local service_name="$1"
+    if ! systemctl is-active --quiet "$service_name"; then
+        echo "Error: service $service_name failed to become active."
+        systemctl status --no-pager "$service_name" || true
+        exit 1
+    fi
+}
+
+ensure_tcp_listener() {
+    local port="$1"
+    if ! ss -lnt | awk '{print $4}' | grep -q ":${port}$"; then
+        echo "Error: expected TCP listener on port $port was not found."
+        ss -lnt || true
+        exit 1
+    fi
+}
+
 # Restarting openssh service
 systemctl restart "$SSH_SERVICE"
+ensure_service_active "$SSH_SERVICE"
+ensure_tcp_listener "$SSH_Port1"
+ensure_tcp_listener "$SSH_Port2"
 systemctl status --no-pager "$SSH_SERVICE"
 
 # Removing some duplicate config file
@@ -492,17 +514,24 @@ import sys
 import threading
 import time
 
-# CONFIG
 LISTENING_ADDR = '0.0.0.0'
 LISTENING_PORT = $WsPort
-
 PASS = ''
 
-# CONST
 BUFLEN = 16384
 TIMEOUT = 300
 DEFAULT_HOST = '127.0.0.1:$Dropbear_Port1'
-RESPONSE = b'$WsResponse'
+
+WS_RESPONSE = (
+    b'HTTP/1.1 101 <b><i><font color="green">WELCOME TO NETWORK TWEAKER</font></b>\r\n'
+    b'Upgrade: websocket\r\n'
+    b'Connection: Upgrade\r\n'
+    b'Sec-WebSocket-Accept: foo\r\n'
+    b'Content-Length: 104857600000\r\n'
+    b'\r\n'
+)
+
+CONNECT_RESPONSE = b'HTTP/1.1 200 OK\r\n\r\n'
 
 
 class Server(threading.Thread):
@@ -582,7 +611,7 @@ class ConnectionHandler(threading.Thread):
         self.client = soc_client
         self.client_buffer = b''
         self.server = server
-        self.log = 'Connection: {}'.format(addr)
+        self.log = f'Connection: {addr}'
         self.target = None
 
     def close(self):
@@ -613,8 +642,12 @@ class ConnectionHandler(threading.Thread):
     def run(self):
         try:
             self.client_buffer = self.client.recv(BUFLEN)
+            request_line = self.get_request_line(self.client_buffer)
+            is_connect = request_line.upper().startswith('CONNECT ')
 
             host_port = self.find_header(self.client_buffer, 'X-Real-Host')
+            if host_port == '':
+                host_port = self.find_header(self.client_buffer, 'X-Online-Host')
             if host_port == '':
                 host_port = DEFAULT_HOST
 
@@ -629,23 +662,29 @@ class ConnectionHandler(threading.Thread):
                 passwd = self.find_header(self.client_buffer, 'X-Pass')
 
                 if len(PASS) != 0 and passwd == PASS:
-                    self.method_connect(host_port)
+                    self.method_connect(host_port, is_connect)
                 elif len(PASS) != 0 and passwd != PASS:
                     self.client.sendall(b'HTTP/1.1 400 WrongPass!\r\n\r\n')
-                elif host_port.startswith('127.0.0.1') or host_port.startswith('localhost'):
-                    self.method_connect(host_port)
                 else:
-                    self.client.sendall(b'HTTP/1.1 403 Forbidden!\r\n\r\n')
+                    self.method_connect(host_port, is_connect)
             else:
-                self.server.print_log('- No X-Real-Host!')
-                self.client.sendall(b'HTTP/1.1 400 NoXRealHost!\r\n\r\n')
+                self.server.print_log('- No host header found!')
+                self.client.sendall(b'HTTP/1.1 400 NoHost!\r\n\r\n')
 
         except Exception as e:
-            self.log += ' - error: {}'.format(str(e))
+            self.log += f' - error: {e}'
             self.server.print_log(self.log)
         finally:
             self.close()
             self.server.remove_conn(self)
+
+    def get_request_line(self, head):
+        try:
+            text = head.decode('utf-8', errors='ignore')
+        except Exception:
+            return ''
+        lines = text.splitlines()
+        return lines[0].strip() if lines else ''
 
     def find_header(self, head, header):
         try:
@@ -653,17 +692,14 @@ class ConnectionHandler(threading.Thread):
         except Exception:
             return ''
 
-        marker = header + ': '
-        pos = text.find(marker)
-        if pos == -1:
-            return ''
+        for line in text.splitlines():
+            if ':' not in line:
+                continue
+            key, value = line.split(':', 1)
+            if key.strip().lower() == header.lower():
+                return value.strip()
 
-        value_start = pos + len(marker)
-        value_end = text.find('\r\n', value_start)
-        if value_end == -1:
-            return ''
-
-        return text[value_start:value_end].strip()
+        return ''
 
     def connect_target(self, host):
         i = host.find(':')
@@ -673,7 +709,7 @@ class ConnectionHandler(threading.Thread):
         else:
             port = LISTENING_PORT
 
-        info = socket.getaddrinfo(host, port, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        info = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)
         soc_family, soc_type, proto, _, address = info[0]
 
         self.target = socket.socket(soc_family, soc_type, proto)
@@ -683,10 +719,15 @@ class ConnectionHandler(threading.Thread):
         self.target.settimeout(None)
         self.target_closed = False
 
-    def method_connect(self, path):
-        self.log += ' - CONNECT {}'.format(path)
+    def method_connect(self, path, is_connect=False):
+        self.log += f' - CONNECT {path}'
         self.connect_target(path)
-        self.client.sendall(RESPONSE)
+
+        if is_connect:
+            self.client.sendall(CONNECT_RESPONSE)
+        else:
+            self.client.sendall(WS_RESPONSE)
+
         self.client_buffer = b''
         self.server.print_log(self.log)
         self.do_connect()
@@ -783,6 +824,7 @@ if __name__ == '__main__':
     main()
 EOF
 chmod +x $loc/proxy.py
+
 
 # Creating a template service so we can run WS on multiple ports
 cat <<'service' > /etc/systemd/system/ws@.service
@@ -906,38 +948,59 @@ rm -rf /etc/squid/squid.con*
  
 # Creating Squid server config using cat eof tricks
 cat <<'mySquid' > /etc/squid/squid.conf
-# My Squid Proxy Server Config
-acl server dst IP-ADDRESS/32 localhost
+# My Squid Proxy Server Config (compat mode)
+acl localhost src 127.0.0.1/32
 acl checker src 188.93.95.137
-acl ports_ port 14 22 53 21 8080 8081 8880 25 8000 3128 1193 1194 440 441 442 299 550 790 443 80
+acl server dst all
+
+acl SSL_ports port 443
+acl SSL_ports port 80
+acl SSL_ports port 8080
+acl SSL_ports port 8880
+acl SSL_ports port 8000
+acl SSL_ports port 3128
+acl SSL_ports port 790
+acl SSL_ports port 550
+
+acl Safe_ports port 80
+acl Safe_ports port 443
+acl Safe_ports port 8080
+acl Safe_ports port 8880
+acl Safe_ports port 8000
+acl Safe_ports port 3128
+acl Safe_ports port 790
+acl Safe_ports port 550
+acl CONNECT method CONNECT
+
 http_port Squid_Port1
 http_port Squid_Port2
-access_log none
-cache_log /dev/null
+access_log stdio:/var/log/squid/access.log
+cache_log /var/log/squid/cache.log
 logfile_rotate 0
 max_filedescriptors 65535
-http_access allow server
+cache deny all
+
+http_access deny !Safe_ports
+http_access deny CONNECT !SSL_ports
+http_access allow localhost
 http_access allow checker
+http_access allow server
 http_access deny all
-http_access allow all
+
 forwarded_for off
 via off
 request_header_access Host allow all
 request_header_access Content-Length allow all
 request_header_access Content-Type allow all
 request_header_access All deny all
-hierarchy_stoplist cgi-bin ?
 coredump_dir /var/spool/squid
 refresh_pattern ^ftp: 1440 20% 10080
 refresh_pattern ^gopher: 1440 0% 1440
 refresh_pattern -i (/cgi-bin/|\?) 0 0% 0
 refresh_pattern . 0 20% 4320
-visible_hostname IP-ADDRESS
+visible_hostname guruzgh
 mySquid
 
-# Setting machine's IP Address inside of our Squid config(security that only allows this machine to use this proxy server)
-sed -i "s|IP-ADDRESS|$IPADDR|g" /etc/squid/squid.conf
- 
 # Setting squid ports
 sed -i "s|Squid_Port1|$Squid_Port1|g" /etc/squid/squid.conf
 sed -i "s|Squid_Port2|$Squid_Port2|g" /etc/squid/squid.conf
@@ -1047,7 +1110,7 @@ fi
 if check_port SSHPORT1 && check_port SSHPORT2 && systemctl is-active --quiet ssh; then
     clear_fail ssh
 else
-    restart_after_3_fails ssh ssh "SSHPORT1,SSHPORT2"
+    mark_fail ssh >/dev/null
 fi
 
 # sync WS checker ports from WsPorts array
