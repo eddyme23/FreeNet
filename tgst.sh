@@ -1586,7 +1586,7 @@ create_user() {
   echo "Username   : $user"
   echo "Password   : $pass"
   echo "SSH Port   : 22"
-  echo "Dropbear   : 550"
+  echo "Dropbear   : 80"
   echo "SSL        : 443"
   echo "WebSocket  : 80,8080,8880,2052,2082,2086,2095"
   echo "SlowDNS    : 5300"
