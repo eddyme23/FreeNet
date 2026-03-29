@@ -92,8 +92,8 @@ Serverpub='7fbd1f8aa0abfe15a7903e837f78aba39cf61d36f183bd604daa2fe4ef3b7b59'
 UDP_PORT=":36712"
 
 # Prompt installer for Hysteria obfs and password
-_default_obfs='sa4uhy'
-_default_password='EzUdp90hy'
+_default_obfs='GuruzScript'
+_default_password='GuruzScript'
 
 if [ -t 0 ]; then
   # Prompt for obfs (user can press Enter to accept default)
@@ -120,10 +120,6 @@ Dns_2='1.0.0.1'
 
 # Server local time
 MyVPS_Time='Africa/Accra'
-
-# Telegram IDs
-My_Chat_ID='835541277'
-My_Bot_Key='5993251866:AAFVsuGJmf8fPNB4XgpQTxZ6aoubfLCEXd8'
 
 ######################################
 ###FreeNet AutoScript Code Begins...###
@@ -274,7 +270,7 @@ systemctl status --no-pager webmin || true
 cat <<'deekay77' > /etc/zorro-luffy
 <br><img alt="TmzxboghrK0LzxE8Qp/qP6Enw++EHeVt" 
 style="display:none;">
-<font color="#C12267">GURUZGH | SSH SCRIPT | SERVER<br></font>
+<font color="#C12267">GURUZGH | VPN | SERVICE<br></font>
 <br>
 <font color="#b3b300"> x No DDOS<br></font>
 <font color="#00cc00"> x No Torrent<br></font>
@@ -282,7 +278,7 @@ style="display:none;">
 <font color="blue"> x No Phishing<br></font>
 <font color="#A810FF"> x No Hacking<br></font>
 <br>
-<font color="red">• BROUGHT TO YOU BY <br></font><font color="#00cccc">https://t.me/GuruzGH !<br></font>
+<font color="red">• BROUGHT TO YOU BY <br></font><font color="#00cccc">https://t.me/guruzfreenet !<br></font>
 deekay77
 
 # Removing some duplicated sshd server configs
@@ -805,7 +801,6 @@ NoNewPrivileges=true
 LimitNOFILE=1048576
 TasksMax=infinity
 Restart=on-failure
-RestartSec=5
 ExecStartPre=/usr/bin/python3 -m py_compile /etc/socksproxy/proxy.py
 ExecStart=/usr/bin/python3 -O /etc/socksproxy/proxy.py -b 0.0.0.0 -p %i
 StandardOutput=journal
@@ -910,7 +905,7 @@ cat <<'mySquid' > /etc/squid/squid.conf
 # My Squid Proxy Server Config
 acl server dst IP-ADDRESS/32 localhost
 acl checker src 188.93.95.137
-acl ports_ port 14 22 53 21 8080 8081 8880 25 8000 3128 1193 1194 440 441 442 299 550 790 443 80
+acl ports_ port 14 22 53 21 8081 25 8000 3128 1193 1194 440 441 442 299 550 790 443 80 8080 8880 2052 2082 2086 2095 8888
 http_port Squid_Port1
 http_port Squid_Port2
 access_log none
