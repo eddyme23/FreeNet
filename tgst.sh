@@ -1870,7 +1870,7 @@ remove_script() {
   case "$ans" in
     y|Y)
       echo "Stopping services..."
-      for p in 80 8080 8880 2052 2082 2086 2095; do
+      for p in 80 8080 8880 2052 2082 2086 25 2095; do
         systemctl stop ws@"$p" 2>/dev/null || true
         systemctl disable ws@"$p" 2>/dev/null || true
       done
@@ -1955,14 +1955,14 @@ draw_header() {
   echo
   echo -e "${BLUE}══════════════════════════════════════════════════════════════${NC}"
   echo -e "${WHITE}• SSH:${NC} ${YELLOW}22${NC}                  ${WHITE}• System-DNS:${NC} ${YELLOW}53${NC}"
-  echo -e "${WHITE}• Dropbear:${NC} ${YELLOW}550${NC}            ${WHITE}• WEB-Nginx:${NC} ${YELLOW}85${NC}"
+  echo -e "${WHITE}• Dropbear:${NC} ${YELLOW}80${NC}             ${WHITE}• WEB-Nginx:${NC} ${YELLOW}85${NC}"
   echo -e "${WHITE}• SSL:${NC} ${YELLOW}443${NC}                 ${WHITE}• SSL/PYTHON:${NC} ${YELLOW}443${NC}"
   echo -e "${WHITE}• WS/PYTHON:${NC} ${YELLOW}80${NC}            ${WHITE}• WS/PYTHON:${NC} ${YELLOW}8080${NC}"
   echo -e "${WHITE}• WS/PYTHON:${NC} ${YELLOW}8880${NC}          ${WHITE}• WS/PYTHON:${NC} ${YELLOW}2052${NC}"
   echo -e "${WHITE}• WS/PYTHON:${NC} ${YELLOW}2082${NC}          ${WHITE}• WS/PYTHON:${NC} ${YELLOW}2086${NC}"
   echo -e "${WHITE}• WS/PYTHON:${NC} ${YELLOW}2095${NC}          ${WHITE}• Squid:${NC} ${YELLOW}8000${NC}"
-  echo -e "${WHITE}• SlowDNS:${NC} ${YELLOW}5300${NC}            ${WHITE}• BadVPN:${NC} ${YELLOW}7300${NC}"
-  echo -e "${WHITE}• HysteriaUDP:${NC} ${YELLOW}20000-50000${NC}"
+  echo -e "${WHITE}• SlowDNS:${NC} ${YELLOW}5300${NC}            ${WHITE}• WS/PYTHON:${NC} ${YELLOW}25${NC}"
+  echo -e "${WHITE}• HysteriaUDP:${NC} ${YELLOW}20000-50000${NC} ${WHITE}• BadVPN:${NC} ${YELLOW}7300${NC}"
   echo -e "${BLUE}══════════════════════════════════════════════════════════════${NC}"
   echo -e "${WHITE}• TOTAL:${NC} ${YELLOW}${TOTAL:-N/A}${NC}   ${WHITE}• FREE:${NC} ${YELLOW}${FREE:-N/A}${NC}   ${WHITE}• USED:${NC} ${YELLOW}${USED:-N/A}${NC}"
   echo -e "${WHITE}• U/RAM:${NC} ${YELLOW}$(ram_percent)${NC}  ${WHITE}• U/CPU:${NC} ${YELLOW}$(cpu_percent)${NC}  ${WHITE}• BUFFER:${NC} ${YELLOW}$(buffer_mem)${NC}"
@@ -2110,7 +2110,7 @@ echo "Services & Port Information:" | tee -a log-install.txt | lolcat
 echo "   • Dropbear             : [ON] : $Dropbear_Port1 | $Dropbear_Port2 " | tee -a log-install.txt | lolcat
 echo "   • Squid Proxy          : [ON] : $Squid_Port1 | $Squid_Port2" | tee -a log-install.txt | lolcat
 echo "   • SSL through Dropbear : [ON] : 443" | tee -a log-install.txt | lolcat
-echo "   • SSH Websocket        : [ON] : 443 | 80 | 8080 | 8880 | 2052 | 2082 | 2086 | 2095" | tee -a log-install.txt | lolcat
+echo "   • SSH Websocket        : [ON] : 443 | 80 | 8080 | 8880 | 2052 | 2082 | 2086 | 2095 | 25" | tee -a log-install.txt | lolcat
 echo "   • BadVPN               : [ON] : 7300 " | tee -a log-install.txt | lolcat
 echo "   • Hysteria             : [ON] : 20000:50000" | tee -a log-install.txt | lolcat
 echo "   • Nginx                : [ON] : $Nginx_Port" | tee -a log-install.txt | lolcat
@@ -2138,11 +2138,11 @@ echo "" | tee -a log-install.txt
 
 echo "[2/4] Listening sockets (TCP/UDP) - filtered" | tee -a log-install.txt
 # Show listeners for the main ports used by this script
-ss -lntup 2>/dev/null | egrep -n ':(22|80|85|299|443|550|666|790|3128|8000|8080|8880|2052|2082|2086|2095|5300|7300|36712)\b' | tee -a log-install.txt || true
+ss -lntup 2>/dev/null | egrep -n ':(22|80|85|299|443|550|666|790|3128|8000|8080|8880|2052|2082|2086|2095|25|5300|7300|36712)\b' | tee -a log-install.txt || true
 echo "" | tee -a log-install.txt
 
 echo "[3/4] NAT/Firewall rules (iptables -t nat) - relevant lines" | tee -a log-install.txt
-iptables -t nat -S 2>/dev/null | egrep -n '(REDIRECT|DNAT|--dport 53|5300|36712|20000:50000|--dport 443|--dport 80|--dport 85|--dport 8080|--dport 8880|--dport 2052|--dport 2082|--dport 2086|--dport 2095)' | tee -a log-install.txt || true
+iptables -t nat -S 2>/dev/null | egrep -n '(REDIRECT|DNAT|--dport 53|5300|36712|20000:50000|--dport 443|--dport 80|--dport 85|--dport 8080|--dport 8880|--dport 2052|--dport 2082|--dport 2086|--dport 2095|--dport 25)' | tee -a log-install.txt || true
 echo "" | tee -a log-install.txt
 
 echo "[4/4] Config quick-checks" | tee -a log-install.txt
