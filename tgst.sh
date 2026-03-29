@@ -25,9 +25,9 @@ echo "============================================================"
 echo ""
 echo "Supported Operating Systems:"
 echo ""
+echo "  ✔ Debian 12              (Recommended)"
 echo "  ✔ Ubuntu 22.04           (Recommended)"
 echo "  ✔ Ubuntu 24.04           (Supported)"
-echo "  ✔ Debian 12              (Supported)"
 echo "  ✔ Debian 11              (Legacy Support)"
 echo "  ✔ Ubuntu 20.04           (Legacy Support)"
 echo ""
@@ -75,7 +75,7 @@ Stunnel_Port='443' # through SSLH
 Squid_Port1='3128'
 Squid_Port2='8000'
 # Python Socks Proxy
-WsPorts=('80' '8080' '8880' '2052' '2082' '2086' '2095' '25' '8888')  # WS ports to listen on
+WsPorts=('80' '8080' '8880' '2052' '2082' '2086' '2095' '25')  # WS ports to listen on
 WsPort='80'  # default WS port
 WsResponse='HTTP/1.1 101 Switching Protocols\r\n\r\n'
 
@@ -120,6 +120,10 @@ Dns_2='1.0.0.1'
 
 # Server local time
 MyVPS_Time='Africa/Accra'
+
+# Telegram IDs
+My_Chat_ID='344472672'
+My_Bot_Key='8715170470:AAE8urT5fSWdZ_xgkwwZivN4kgHW9nBVxgY'
 
 ######################################
 ###FreeNet AutoScript Code Begins...###
