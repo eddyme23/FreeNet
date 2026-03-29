@@ -909,7 +909,7 @@ cat <<'mySquid' > /etc/squid/squid.conf
 # My Squid Proxy Server Config
 acl server dst IP-ADDRESS/32 localhost
 acl checker src 188.93.95.137
-acl ports_ port 14 22 53 21 8081 25 8000 3128 1193 1194 440 441 442 299 550 790 443 80 8080 8880 2052 2082 2086 2095 8888
+acl ports_ port 14 22 53 21 8081 25 8000 3128 1193 1194 440 441 442 299 550 790 443 80 8080 8880 2082 2086
 http_port Squid_Port1
 http_port Squid_Port2
 access_log none
@@ -1367,8 +1367,6 @@ export DEBIAN_FRONTEND=noninteractive
 iptables -C INPUT -p udp --dport 5300 -j ACCEPT 2>/dev/null || iptables -I INPUT -p udp --dport 5300 -j ACCEPT
 iptables -t nat -C PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 5300 2>/dev/null || iptables -t nat -I PREROUTING -p udp --dport 53 -j REDIRECT --to-ports 5300
 
-# WS ports are handled by systemd instances ws@PORT (no iptables redirects)
-
 # Disable IpV6
 echo 1 > /proc/sys/net/ipv6/conf/all/disable_ipv6
 
@@ -1444,7 +1442,11 @@ systemctl start badvpn
 systemctl status --no-pager badvpn
 
 # Some Final Cronjob
-echo "*/3 * * * * root /bin/bash /etc/deekayvpn/service_checker.sh >/dev/null 2>&1" > /etc/cron.d/service-checker
+# echo "*/3 * * * * root /bin/bash /etc/deekayvpn/service_checker.sh >/dev/null 2>&1" > /etc/cron.d/service-checker
+# echo "*/2 * * * * root /usr/sbin/logrotate -v -f /etc/logrotate.d/rsyslog >/dev/null 2>&1" > /etc/cron.d/logrotate
+
+# Some Final Cronjob
+echo "* * * * * root /bin/bash /etc/deekayvpn/service_checker.sh >/dev/null 2>&1" > /etc/cron.d/service-checker
 echo "*/2 * * * * root /usr/sbin/logrotate -v -f /etc/logrotate.d/rsyslog >/dev/null 2>&1" > /etc/cron.d/logrotate
 
 clear
@@ -1587,7 +1589,7 @@ create_user() {
   echo "SSH Port   : 22"
   echo "Dropbear   : 80"
   echo "SSL        : 443"
-  echo "WebSocket  : 80,8080,8880,2052,2082,2086,2095"
+  echo "WebSocket  : 80,8080,8880,2082,2086,25"
   echo "SlowDNS    : 5300"
   echo "BadVPN     : 7300"
   echo "Hysteria   : 20000-50000"
@@ -1734,7 +1736,7 @@ show_ports() {
   echo "══════════════════════════════════════════════════════════════"
   echo "                     OPEN PORTS"
   echo "══════════════════════════════════════════════════════════════"
-  ss -lntup 2>/dev/null | egrep ':(22|53|80|85|443|550|2052|2082|2086|2095|3128|5300|7300|8000|8080|8880|36712)\b' || true
+  ss -lntup 2>/dev/null | egrep ':(22|53|80|85|443|550|25|2082|2086|3128|5300|7300|8000|8080|8880|36712)\b' || true
   pause_return
 }
 
@@ -1788,7 +1790,7 @@ view_hysteria() {
 
 restart_all() {
   systemctl restart ssh dropbear stunnel4 sslh squid nginx server-sldns hysteria-server badvpn 2>/dev/null || true
-  for p in 80 8080 8880 2052 2082 2086 2095; do
+  for p in 80 8080 8880 25 2082 2086; do
     systemctl restart ws@"$p" 2>/dev/null || true
   done
   echo -e "${GREEN}All services restarted.${NC}"
@@ -1833,12 +1835,10 @@ protocol_guide() {
   echo "                    PROTOCOL GUIDE"
   echo "══════════════════════════════════════════════════════════════"
   echo "SSH: 22"
-  echo "Dropbear: 550"
+  echo "Dropbear: 80"
   echo "SSL: 443"
   echo "SSL/PYTHON: 443"
-  echo "WebSocket: 80, 8080, 8880, 2052, 2082, 2086, 2095"
-  echo "Squid Proxy: 8000"
-  echo "System-DNS: 53"
+  echo "WebSocket: 80, 8080, 8880, 2082, 2086, 25"
   echo "SlowDNS: 5300"
   echo "Hysteria UDP: 20000-50000"
   echo "BadVPN: 7300"
@@ -1869,7 +1869,7 @@ remove_script() {
   case "$ans" in
     y|Y)
       echo "Stopping services..."
-      for p in 80 8080 8880 2052 2082 2086 25 2095; do
+      for p in 80 8080 8880 2082 2086 25; do
         systemctl stop ws@"$p" 2>/dev/null || true
         systemctl disable ws@"$p" 2>/dev/null || true
       done
@@ -1957,10 +1957,9 @@ draw_header() {
   echo -e "${WHITE}• Dropbear:${NC} ${YELLOW}80${NC}             ${WHITE}• WEB-Nginx:${NC} ${YELLOW}85${NC}"
   echo -e "${WHITE}• SSL:${NC} ${YELLOW}443${NC}                 ${WHITE}• SSL/PYTHON:${NC} ${YELLOW}443${NC}"
   echo -e "${WHITE}• WS/PYTHON:${NC} ${YELLOW}80${NC}            ${WHITE}• WS/PYTHON:${NC} ${YELLOW}8080${NC}"
-  echo -e "${WHITE}• WS/PYTHON:${NC} ${YELLOW}8880${NC}          ${WHITE}• WS/PYTHON:${NC} ${YELLOW}2052${NC}"
+  echo -e "${WHITE}• WS/PYTHON:${NC} ${YELLOW}8880${NC}          ${WHITE}• WS/PYTHON:${NC} ${YELLOW}25${NC}"
   echo -e "${WHITE}• WS/PYTHON:${NC} ${YELLOW}2082${NC}          ${WHITE}• WS/PYTHON:${NC} ${YELLOW}2086${NC}"
-  echo -e "${WHITE}• WS/PYTHON:${NC} ${YELLOW}2095${NC}          ${WHITE}• Squid:${NC} ${YELLOW}8000${NC}"
-  echo -e "${WHITE}• SlowDNS:${NC} ${YELLOW}5300${NC}            ${WHITE}• WS/PYTHON:${NC} ${YELLOW}25${NC}"
+  echo -e "${WHITE}• SlowDNS:${NC} ${YELLOW}5300${NC}            ${WHITE}• Squid:${NC} ${YELLOW}8000${NC}"           
   echo -e "${WHITE}• HysteriaUDP:${NC} ${YELLOW}20000-50000${NC} ${WHITE}• BadVPN:${NC} ${YELLOW}7300${NC}"
   echo -e "${BLUE}══════════════════════════════════════════════════════════════${NC}"
   echo -e "${WHITE}• TOTAL:${NC} ${YELLOW}${TOTAL:-N/A}${NC}   ${WHITE}• FREE:${NC} ${YELLOW}${FREE:-N/A}${NC}   ${WHITE}• USED:${NC} ${YELLOW}${USED:-N/A}${NC}"
@@ -2109,7 +2108,7 @@ echo "Services & Port Information:" | tee -a log-install.txt | lolcat
 echo "   • Dropbear             : [ON] : $Dropbear_Port1 | $Dropbear_Port2 " | tee -a log-install.txt | lolcat
 echo "   • Squid Proxy          : [ON] : $Squid_Port1 | $Squid_Port2" | tee -a log-install.txt | lolcat
 echo "   • SSL through Dropbear : [ON] : 443" | tee -a log-install.txt | lolcat
-echo "   • SSH Websocket        : [ON] : 443 | 80 | 8080 | 8880 | 2052 | 2082 | 2086 | 2095 | 25" | tee -a log-install.txt | lolcat
+echo "   • SSH Websocket        : [ON] : 443 | 80 | 8080 | 8880 | 2082 | 2086 | 25" | tee -a log-install.txt | lolcat
 echo "   • BadVPN               : [ON] : 7300 " | tee -a log-install.txt | lolcat
 echo "   • Hysteria             : [ON] : 20000:50000" | tee -a log-install.txt | lolcat
 echo "   • Nginx                : [ON] : $Nginx_Port" | tee -a log-install.txt | lolcat
@@ -2137,7 +2136,7 @@ echo "" | tee -a log-install.txt
 
 echo "[2/4] Listening sockets (TCP/UDP) - filtered" | tee -a log-install.txt
 # Show listeners for the main ports used by this script
-ss -lntup 2>/dev/null | egrep -n ':(22|80|85|299|443|550|666|790|3128|8000|8080|8880|2052|2082|2086|2095|25|5300|7300|36712)\b' | tee -a log-install.txt || true
+ss -lntup 2>/dev/null | egrep -n ':(22|80|85|299|443|550|666|790|3128|8000|8080|8880|2082|2086|25|5300|7300|36712)\b' | tee -a log-install.txt || true
 echo "" | tee -a log-install.txt
 
 echo "[3/4] NAT/Firewall rules (iptables -t nat) - relevant lines" | tee -a log-install.txt
